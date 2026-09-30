@@ -1,0 +1,342 @@
+*diffmerge.txt*    Diff, merge and browse git history with Vim's diff mode
+
+==============================================================================
+CONTENTS                                                   *diffmerge-contents*
+
+  1. Introduction ............................... |diffmerge-intro|
+  2. Setup ...................................... |diffmerge-setup|
+  3. Commands ................................... |diffmerge-commands|
+  4. Views ...................................... |diffmerge-views|
+     Status ..................................... |diffmerge-status|
+     Diff ....................................... |diffmerge-diff|
+     Log / history .............................. |diffmerge-log|
+     Merge ...................................... |diffmerge-merge|
+  5. git difftool / mergetool ................... |diffmerge-git|
+  6. Keymaps / actions .......................... |diffmerge-keymaps|
+  7. Configuration .............................. |diffmerge-config|
+  8. Highlights ................................. |diffmerge-highlights|
+  9. Lua API .................................... |diffmerge-api|
+
+==============================================================================
+1. INTRODUCTION                                               *diffmerge-intro*
+
+DiffMerge shows git comparisons in Vim's own diff mode (|diff|): filler lines,
+scroll binding, folding of unchanged text, |]c| / |[c|, |do| / |dp| all work as
+usual. Every view states the git command it is equivalent to, so there are no
+surprises from git's point of view.
+
+- Working tree files are the real buffers: edit and |:w| them.
+- The index is an editable buffer: |:w| writes it to the index.
+- Merges start meld-style ("auto-merge"): non-conflicting changes are applied,
+  conflicts show the BASE text (no conflict markers) until you resolve them.
+
+Requires Neovim 0.12+ and git 2.23+. Mini.icons (files and folders) or 
+nvim-web-devicons (files) are used for icons when available.
+
+==============================================================================
+2. SETUP                                                      *diffmerge-setup*
+
+With lazy.nvim: >lua
+    {
+      "XobSod/nvim-diffmerge",
+      cmd = "DiffMerge",
+      opts = {},
+      keys = {
+        { "<leader>do", "<CMD>DiffMerge<CR>", desc = "Status" },
+        { "<leader>dq", "<CMD>DiffMerge close<CR>", desc = "Close" },
+        { "<leader>dl", "<CMD>DiffMerge log<CR>", desc = "Log (repository)" },
+        { "<leader>dh", "<CMD>DiffMerge history<CR>", desc = "History (file)" },
+        { "<leader>dh", ":DiffMerge history<CR>", mode = "x", desc = "History (lines)" },
+        { "<leader>dc", "<CMD>DiffMerge conflicts<CR>", desc = "Conflicts" },
+        { "<leader>df", "<CMD>DiffMerge files<CR>", desc = "Toggle files" },
+      },
+    }
+<
+`require("diffmerge").setup(opts)` is optional; defaults are used otherwise.
+
+==============================================================================
+3. COMMANDS                                                *diffmerge-commands*
+
+                                                                  *:DiffMerge*
+:DiffMerge [status]     Status view: Conflicts / Staged / Unstaged / Untracked
+                        (what `git status` shows). Re-uses an open status view.
+
+:DiffMerge conflicts    Status view with the cursor on the first conflict.
+
+:DiffMerge diff [args] [-- paths]
+                        Any `git diff` comparison, e.g. >vim
+                          :DiffMerge diff HEAD~3
+                          :DiffMerge diff --staged
+                          :DiffMerge diff main...HEAD -- lua/
+                          :DiffMerge diff v1.0 v2.0
+                          :DiffMerge diff abc123^!
+<
+:DiffMerge log [git log args] [-- paths]
+                        Repository history with the commit graph. All
+                        branches by default (like `git log --graph
+                        --branches --remotes`).
+
+:DiffMerge history [path]
+                        History of a file or directory (default: current
+                        file). Single files follow renames.
+:'<,'>DiffMerge history History of the selected lines (`git log -L`).
+
+:DiffMerge difftool [left right [name]]
+:DiffMerge mergetool [local base remote merged]
+                        Entry points for |diffmerge-git|. Without arguments
+                        the files are taken from the argument list.
+
+:DiffMerge close        Close the view of the current tab.
+:DiffMerge close_all    Close every view (e.g. before saving a session:
+                        auto-session `pre_save_cmds = { "DiffMerge close_all" }`).
+:DiffMerge refresh      Refresh the view.
+:DiffMerge layout [name]
+                        Cycle or set the layout (|diffmerge-layouts|).
+:DiffMerge files        Toggle the file panel.
+:DiffMerge focus_files  Focus the file panel.
+:DiffMerge abort        (git mergetool) Quit reporting failure to git.
+
+==============================================================================
+4. VIEWS                                                      *diffmerge-views*
+
+Every view is a tabpage: file panel on the left, log panel at the bottom (log
+views), diff windows in the rest. Closing the tab closes the view.
+
+                                                            *diffmerge-layouts*
+Layouts describe how the windows are arranged:
+
+  side_by_side   old | new             mine | merged | other
+  stacked        old / new             mine / merged / other
+  four_way       (merges)              mine | base | other / merged
+
+`gl` cycles the layouts of the current kind (diff or merge).
+
+------------------------------------------------------------------------------
+STATUS                                                       *diffmerge-status*
+
+  Section      Left       Right                   git
+  Conflicts    stages     working tree (merged)   unmerged paths
+  Staged       HEAD       index (editable)        git diff --staged
+  Unstaged     index      working tree            git diff
+  Untracked    nothing    working tree
+
+Staging:
+- `-` in the file panel stages / unstages the file, directory or section
+  under the cursor (visual: every line). On a conflict it marks the file
+  resolved (`git add`) after checking for unresolved conflicts / markers.
+- `-` in a diff window stages the hunk under the cursor (Unstaged /
+  Untracked) or unstages it (Staged). In visual mode only the selected lines.
+- `S` stages everything, `U` unstages everything, `X` discards unstaged
+  changes / deletes untracked files (asks first).
+- The INDEX buffer is editable; |:w| writes it to the index.
+
+The view refreshes when files are written, when Neovim gets focus and when the
+git directory changes (e.g. lazygit or a terminal).
+
+------------------------------------------------------------------------------
+DIFF                                                           *diffmerge-diff*
+
+`:DiffMerge diff` understands the same arguments as `git diff`:
+
+  git diff                    index -> working tree
+  git diff --staged [C]       C (HEAD) -> index
+  git diff C                  C -> working tree
+  git diff A B, git diff A..B A -> B (the same thing: two snapshots)
+  git diff A...B              merge-base(A, B) -> B (changes on B since it
+                              forked from A, what a pull request shows)
+  git diff C^!                C^ -> C
+
+Paths are relative to the current directory, as on the git command line.
+
+Note that `A..B` means something else in `git log` (commits in B that are not
+in A); in `git diff` it is just the two snapshots.
+
+------------------------------------------------------------------------------
+LOG / HISTORY                                                   *diffmerge-log*
+
+The log panel shows `git log --graph` with git's own colours. The line format
+is configurable (`log.format`, a git pretty format); the default mirrors a
+`--graph --oneline --decorate` "tree view" with author and date.
+
+The first two rows are pseudo rows: *Working tree* and *Index*.
+
+  Cursor on a commit C      git diff C^ C      (`P` cycles merge parents)
+  Cursor on Working tree    git diff
+  Cursor on Index           git diff --staged
+  `m` on two rows A, B      git diff A B       older side on the left;
+                                               `t` toggles git diff A...B
+  visual rows + <CR>        git diff O^ N      combined changes of the
+                                               selected commits O..N
+
+A visual selection must be one line of history: exactly the commits of
+`git rev-list O^..N`. If it is not (e.g. rows of two branches), you are told
+what is included / missing and asked whether to show `git diff O^ N` anyway.
+Selecting the pseudo rows too compares against the working tree / index.
+
+`F` toggles --first-parent, `a` all branches / HEAD only, `f` asks for extra
+`git log` arguments (--author=, --grep=, --since=, ...), `K` shows the commit,
+`Y` yanks its hash, `R` reloads.
+
+------------------------------------------------------------------------------
+MERGE                                                         *diffmerge-merge*
+
+Conflicted files open in a merge layout (default: mine | merged | other).
+The merged buffer starts with the auto-merge result: changes of one side, or
+identical changes of both, are applied; conflicts contain the BASE text.
+
+Native diff colours are muted in merge windows (Vim compares every window
+with every other), and 'diffopt' "linematch" is suspended while a merge is on
+screen so that all versions of a chunk line up. Each chunk is painted by what
+it is:
+
+  sign  L / R / =   auto-merged from LOCAL / REMOTE / both
+  sign  !           unresolved conflict (red)
+  sign  1 3 13 ∅    resolved with LOCAL / REMOTE / both / nothing
+  sign  ✎           edited by hand (counts as resolved)
+  sign  ✓           (side windows) this side is part of the resolution
+
+Resolving, in any window of the merge layout, for the chunk under the cursor:
+
+  <leader>1   toggle LOCAL (mine)      toggling appends / removes, so
+  <leader>2   toggle BASE              <leader>1 then <leader>3 gives
+  <leader>3   toggle REMOTE (theirs)   "mine, then theirs"
+  <leader>0   resolve with nothing
+  dp          (LOCAL / BASE / REMOTE window) replace the chunk with this side
+  ]x / [x     next / previous conflict
+  ]c / [c     next / previous change
+
+The state of a chunk is derived from its content, so undo and manual edits
+just work. Lines typed at the very edge of a chunk (e.g. `o` on the line above
+it) stay outside of it, so an unresolved conflict never becomes "resolved" by
+accident. Modify/delete conflicts stay unresolved until you pick a side; an
+emptied file is offered for deletion (`git rm`) when you mark it resolved. Saving writes what you see (never conflict markers). Re-opening a
+file that was saved half-resolved finds the unresolved conflicts again.
+
+During a rebase "ours" is the branch being rebased onto and "theirs" is your
+commit; the window bars say so.
+
+==============================================================================
+5. GIT DIFFTOOL / MERGETOOL                                     *diffmerge-git*
+
+In `~/.gitconfig`: >gitconfig
+    [diff]
+      tool = diffmerge
+    [difftool]
+      prompt = false
+    [difftool "diffmerge"]
+      cmd = nvim -c \"DiffMerge difftool\" -- \"$LOCAL\" \"$REMOTE\" \"$MERGED\"
+    [merge]
+      tool = diffmerge
+    [mergetool "diffmerge"]
+      cmd = nvim -c \"DiffMerge mergetool\" -- \"$LOCAL\" \"$BASE\" \"$REMOTE\" \"$MERGED\"
+      trustExitCode = true
+    [alias]
+      mt = !nvim -c \"DiffMerge conflicts\"
+<
+`git difftool -d` passes two temporary directories; they are compared with a
+file panel. With `--no-symlinks` git copies edits of right-side files back to
+the working tree when Neovim exits (only when the right side is the working
+tree, not with `--staged`).
+
+`git mergetool` runs the tool once per file. Neovim exits with code 1 (git
+restores the file and reports the merge as failed) while conflicts are
+unresolved or the merged file is unsaved; `:DiffMerge abort` quits with 1
+explicitly. To go through all conflicts in one Neovim, use
+`:DiffMerge conflicts` (the `git mt` alias above).
+
+==============================================================================
+6. KEYMAPS / ACTIONS                                        *diffmerge-keymaps*
+                                                            *diffmerge-actions*
+
+All mappings are buffer-local and only exist while a view shows the buffer;
+mappings they shadow are restored afterwards. `g?` lists them. Change them
+with `keymaps.<group>[lhs] = action | function | false`.
+
+view (every window)         diff (status diff windows)
+  ]f / [f  next_file          -        toggle_stage_hunk (visual: lines)
+  gl       cycle_layout
+  <leader>W toggle_whitespace
+  g?       help
+
+merge                        file_panel                log_panel
+  <leader>1 toggle_local       <CR> o  select            <CR>  select
+  <leader>2 toggle_base        l       expand            m     mark
+  <leader>3 toggle_remote      h       collapse          M     clear_marks
+  <leader>0 take_none          -       toggle_stage      t     toggle_range_mode
+  dp        put_side
+  ]x / [x   next/prev_conflict S       stage_all         P     cycle_parent
+  ]c / [c   next/prev_chunk    U       unstage_all       K     commit_details
+                               X       discard           Y     yank_hash
+                               i       toggle_tree       F     toggle_first_parent
+                               R       refresh           a     toggle_all_branches
+                               q       close             f     filter
+                                                         R     refresh
+                                                         q     close
+
+==============================================================================
+7. CONFIGURATION                                             *diffmerge-config*
+
+Defaults: >lua
+    require("diffmerge").setup({
+      layout = {
+        diff = "side_by_side",   -- "side_by_side" | "stacked"
+        merge = "side_by_side",  -- "side_by_side" | "stacked" | "four_way"
+      },
+      file_panel = { width = 30, tree = true, show_stats = true },
+      log_panel = { height = 15 },
+      log = {
+        format = "%<|(15)%C(yellow)%h%C(reset) %C(auto)%d%C(reset) %s "
+          .. "%C(240)by %an%C(reset) %C(244)%ad(%ar)%C(reset)",
+        date = "format:%Y-%m-%d %H:%M:%S",
+        all_branches = true,           -- :DiffMerge log
+        history_all_branches = false,  -- :DiffMerge history
+        first_parent = false,
+        follow_renames = true,
+        max_count = nil,
+      },
+      diff = { algorithm = "histogram" },  -- merge chunks / hunk staging
+      merge = { virtual_text = true },
+      auto_preview = true,     -- moving in a panel shows the entry
+      preview_debounce = 80,
+      watch = true,            -- watch the git dir in status views
+      icons = {
+        folder_closed = "▸", folder_open = "▾",      -- folders (file panel)
+        expander_closed = "▸", expander_open = "▾",  -- sections
+        mark_from = "A", mark_to = "B",              -- log marks
+      },
+      keymaps = { ... },       -- see |diffmerge-keymaps|
+    })
+<
+The native diff windows use 'diffopt' (Neovim 0.12 defaults to
+`linematch:40,inline:char`).
+
+==============================================================================
+8. HIGHLIGHTS                                            *diffmerge-highlights*
+
+Defined with `default = true` (override them in your colorscheme / config).
+Conflict colours are blended from the Normal background.
+
+  DiffMergeConflict / Resolved / Edited      merge chunk backgrounds
+  DiffMergeAdd / Change                      auto-merged chunks (-> DiffAdd…)
+  DiffMergeConflictSign / ResolvedSign / EditedSign / LocalSign / RemoteSign
+  DiffMergeStatusAdded / Modified / Deleted / Renamed / Unmerged / Untracked
+  DiffMergeStatAdd / StatDel                 "+3 -1" in the file panel
+  DiffMergeCurrentLine                       entry shown in the diff windows
+  DiffMergeMarkSign / MarkLine / RangeLine   log marks and selected ranges
+  DiffMergePseudo                            Working tree / Index rows
+  DiffMergeWinbarLabel / WinbarInfo / WinbarConflict / WinbarEdit
+
+==============================================================================
+9. LUA API                                                      *diffmerge-api*
+
+    local dm = require("diffmerge")
+    dm.status({ conflicts = false })
+    dm.diff({ "main...HEAD", "--", "lua/" })
+    dm.log({ args = { "--author=me" } })
+    dm.history(path, { range = { first, last } })
+    dm.difftool(left, right, name)
+    dm.mergetool(local_, base, remote, merged)
+    dm.current()   -- view of the current tab
+    dm.close()
+
+ vim:tw=78:ts=8:ft=help:norl:

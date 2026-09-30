@@ -1,4 +1,6 @@
 local H = dofile(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h") .. "/harness.lua")
+-- two-way Staged / Unstaged diffs (status.three_way = false); tests/stage_spec.lua covers the default
+require("diffmerge.config").options.status.three_way = false
 local api = vim.api
 
 vim.fn.confirm = function()

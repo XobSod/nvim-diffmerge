@@ -137,6 +137,24 @@ function StatusView:collect()
         key = "untracked:" .. e.path,
         sides = { a = source.empty("(untracked)", "a"), b = source.worktree(e.path) },
       })
+    elseif config.options.status.three_way then
+      local entry = self:stage_entry(e, head, head_label)
+      if e.x ~= "." then
+        table.insert(sections.staged.entries, vim.tbl_extend("force", entry, {
+          status = e.x,
+          section = "staged",
+          key = "staged:" .. e.path,
+          stats = staged_stats[e.path],
+        }))
+      end
+      if e.y ~= "." then
+        table.insert(sections.unstaged.entries, vim.tbl_extend("force", entry, {
+          status = e.y,
+          section = "unstaged",
+          key = "unstaged:" .. e.path,
+          stats = unstaged_stats[e.path],
+        }))
+      end
     else
       if e.x ~= "." then
         local old = e.orig or e.path
@@ -144,6 +162,7 @@ function StatusView:collect()
         local b = e.x == "D" and source.empty("(deleted)", "b") or source.index(e.path)
         table.insert(sections.staged.entries, {
           kind = "diff",
+          symlink = e.modes and (e.modes.head == "120000" or e.modes.index == "120000"),
           path = e.path,
           oldpath = e.orig,
           status = e.x,
@@ -157,6 +176,7 @@ function StatusView:collect()
         local b = e.y == "D" and source.empty("(deleted)", "b") or source.worktree(e.path)
         table.insert(sections.unstaged.entries, {
           kind = "diff",
+          symlink = e.modes and (e.modes.index == "120000" or e.modes.worktree == "120000"),
           path = e.path,
           status = e.y,
           section = "unstaged",
@@ -195,6 +215,44 @@ function StatusView:collect()
     sections = { sections.conflicts, sections.staged, sections.unstaged, sections.untracked },
     empty_text = "Working tree clean",
   }
+end
+
+local COLUMNS = { "head", "worktree", "index" }
+
+--- A tracked file with changes: HEAD | WORKING TREE | INDEX, only the columns that differ
+--- (nothing staged: HEAD | WORKING TREE, everything staged: HEAD | INDEX). The set follows
+--- the state after every (un)stage: the column a change moves into always appears, a
+--- column identical to its neighbour goes.
+function StatusView:stage_entry(e, head, head_label)
+  local old = e.orig or e.path
+  local new_file = e.x == "A" or e.y == "A" or not head
+  local index = e.x == "D" and source.empty("(deleted)", "index") or source.index(e.path, { readonly = true })
+  index.label = "INDEX · to be committed"
+  local sides = {
+    head = new_file and source.empty("(new file)", "head") or source.rev(head, old, head_label),
+    worktree = e.y == "D" and source.empty("(deleted)", "worktree") or source.worktree(e.path),
+    index = index,
+  }
+  local show = { head = true, worktree = e.x == "." or e.y ~= ".", index = e.x ~= "." }
+  -- an unsaved working tree buffer differs from the file git compares: keep it visible
+  local buf = util.find_buf(git.abspath(self.repo, e.path))
+  if buf and api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified and e.y ~= "D" then
+    show.worktree = true
+  end
+  -- only (un)staging takes a column away; saving a file or changes made elsewhere
+  -- (lazygit, a terminal) never close the window you work in
+  local cur = self.current
+  if not self.allow_collapse and cur and cur.kind == "stage" and cur.path == e.path then
+    for _, c in ipairs(cur.columns) do
+      show[c] = true
+    end
+  end
+  local columns = vim.tbl_filter(function(c)
+    return show[c]
+  end, COLUMNS)
+  local modes = e.modes or {}
+  local symlink = modes.head == "120000" or modes.index == "120000" or modes.worktree == "120000"
+  return { kind = "stage", path = e.path, oldpath = e.orig, sides = sides, columns = columns, symlink = symlink }
 end
 
 function StatusView:refresh()
@@ -525,18 +583,17 @@ end
 ---@param mode "hunk"|"lines"|"line"
 function StatusView:stage_change(ctx, mode)
   local entry = self.current
+  if entry and entry.kind == "stage" then
+    return self:stage_toggle(ctx, mode)
+  end
   if not entry or entry.kind ~= "diff" then
     return
   end
   local role = self.layout:role_of(ctx.win)
-  if not role then
+  if not role or not self:can_stage_parts(entry) then
     return
   end
   local a, b = self.infos.a, self.infos.b
-  if (a and a.special) or (b and b.special) then
-    util.warn("binary files can only be staged as a whole (- in the file panel)")
-    return
-  end
   local section = entry.section
   local index_info = section == "staged" and b or a
   if index_info and index_info.editable and vim.bo[index_info.buf].modified then
@@ -547,14 +604,8 @@ function StatusView:stage_change(ctx, mode)
     util.warn("staged deletion: unstage the whole file with - in the file panel")
     return
   end
-  local a_lines = api.nvim_buf_get_lines(a.buf, 0, -1, false)
-  local b_lines = api.nvim_buf_get_lines(b.buf, 0, -1, false)
-  if a.src.kind == "empty" then
-    a_lines = {}
-  end
-  if b.src.kind == "empty" then
-    b_lines = {}
-  end
+  local a_lines = a.src.kind == "empty" and {} or util.buf_lines(a.buf, a)
+  local b_lines = b.src.kind == "empty" and {} or util.buf_lines(b.buf, b)
   local from, to, side, direction
   if section == "unstaged" or section == "untracked" then
     from, to = a_lines, b_lines
@@ -574,8 +625,12 @@ function StatusView:stage_change(ctx, mode)
     s = api.nvim_win_get_cursor(ctx.win)[1]
     e = s
   end
-  -- blocks as on screen: whole hunks for `-`, linematch-aligned sub-hunks for lines
-  local all = hunks.compute(from, to, hunks.display_opts(mode ~= "hunk"))
+  -- blocks as on screen: whole hunks for `-`, linematch-aligned sub-hunks for lines; always
+  -- diffed in the direction of the screen (left -> right), xdiff is not symmetric
+  local all = hunks.compute(a_lines, b_lines, hunks.display_opts(mode ~= "hunk"))
+  if direction == "unstage" then
+    all = hunks.invert(all)
+  end
   local picked
   if mode == "hunk" then
     picked = hunks.select(all, side, s, e)
@@ -602,11 +657,11 @@ function StatusView:stage_change(ctx, mode)
       selected[h] = { side = side, s = s, e = e, exact = mode == "line" }
     end
   end
-  local result, tail_from_to = hunks.apply(from, to, all, selected)
+  local result, last = hunks.apply(from, to, all, selected)
   -- whole-file changes: staging a deletion / unstaging an addition removes the index entry
   local to_missing = (direction == "stage" and b.src.kind == "empty") or (direction == "unstage" and a.src.kind == "empty")
   if to_missing and #result == 0 then
-    if self:git({ "rm", "--cached", "-q", "--", ":(literal)" .. entry.path }, "git rm --cached") then
+    if self:remove_from_index(entry.path) then
       self:refresh()
     end
     return
@@ -623,11 +678,222 @@ function StatusView:stage_change(ctx, mode)
     end
     return not vim.bo[info.buf].eol
   end
-  local noeol = tail_from_to and noeol_of(to_info) or noeol_of(from_info)
-  if self:write_index(entry, result, direction, noeol) then
+  local noeol = hunks.noeol(from, to, last, noeol_of(from_info), noeol_of(to_info))
+  local fmt
+  if direction == "stage" then
+    fmt = { filters = true, crlf = b.src.kind ~= "empty" and vim.bo[b.buf].fileformat == "dos", noeol = noeol }
+  else
+    fmt = { filters = false, crlf = b.crlf, noeol = noeol }
+  end
+  if self:write_index(entry, result, fmt) then
     self:refresh()
     if mode == "line" then
       self:cursor_to_next_change(ctx.win, s)
+    end
+  end
+end
+
+--- Removes a path from the index (keeps the file): staging a deletion / unstaging an addition.
+function StatusView:remove_from_index(path)
+  return self:git({ "update-index", "--force-remove", "--", path }, "git update-index --force-remove")
+end
+
+--- Hunk / line staging is possible for this entry (not binary, not a symlink, still current).
+function StatusView:can_stage_parts(entry)
+  for _, info in pairs(self.infos) do
+    if info.special then
+      util.warn("binary files, symlinks and submodules are staged as a whole (- in the file panel)")
+      return false
+    end
+  end
+  if entry.symlink then
+    util.warn("symlinks are staged as a whole (- in the file panel)")
+    return false
+  end
+  local live = false
+  for _, sec in ipairs(self.sections or {}) do
+    for _, e in ipairs(sec.entries) do
+      if e == entry then
+        live = true
+      end
+    end
+  end
+  if not live then
+    util.info(entry.path .. " has no changes any more (committed / discarded elsewhere?); R refreshes")
+    return false
+  end
+  return true
+end
+
+--- Lines (and line format) of a column of a stage entry, displayed or not.
+function StatusView:stage_lines(entry, role)
+  local info = self.infos[role]
+  local src = entry.sides[role]
+  if src.kind == "empty" then
+    return {}, {}
+  end
+  if info then
+    local lines = util.buf_lines(info.buf, info)
+    if info.scratch then
+      return lines, { crlf = info.crlf, noeol = info.noeol }
+    end
+    return lines, { crlf = vim.bo[info.buf].fileformat == "dos", noeol = not vim.bo[info.buf].eol }
+  end
+  if src.kind == "worktree" then
+    local buf = util.find_buf(git.abspath(self.repo, src.path))
+    if buf and api.nvim_buf_is_loaded(buf) then
+      local lines = util.buf_lines(buf)
+      return lines, { crlf = vim.bo[buf].fileformat == "dos", noeol = not vim.bo[buf].eol }
+    end
+  end
+  local lines, flags = source.read_lines(self.repo, src)
+  return lines or {}, flags or {}
+end
+
+--- `-` / `<Space>` in HEAD | WORKING TREE | INDEX: toggles the change under the cursor
+--- between unstaged and staged, from any column.
+function StatusView:stage_toggle(ctx, mode)
+  local entry = self.current
+  local role = self.layout:role_of(ctx.win)
+  if not role or not self:can_stage_parts(entry) then
+    return
+  end
+  local idx_info = self.infos.index
+  if idx_info and idx_info.editable and vim.bo[idx_info.buf].modified then
+    util.warn("the INDEX buffer has unsaved edits: :w it first")
+    return
+  end
+  local head, head_fmt = self:stage_lines(entry, "head")
+  local wt, wt_fmt = self:stage_lines(entry, "worktree")
+  local index, idx_fmt = self:stage_lines(entry, "index")
+  local s, e
+  if ctx.range then
+    s, e = ctx.range[1], ctx.range[2]
+  else
+    s = api.nvim_win_get_cursor(ctx.win)[1]
+    e = s
+  end
+  -- unstaged: index -> working tree; staged (reversed): index -> HEAD
+  local opts = hunks.display_opts(mode ~= "hunk")
+  local unstaged = hunks.compute(index, wt, opts)
+  -- the screen diffs HEAD -> INDEX; xdiff is not symmetric, so compute that way and flip
+  local staged = hunks.invert(hunks.compute(head, index, opts))
+  -- candidates in order of preference: { hunks, side, first, last, direction }
+  local cands
+  if role == "worktree" then
+    local is, ie = hunks.map_line(unstaged, s, "to"), hunks.map_line(unstaged, e, "to")
+    cands = { { unstaged, "to", s, e, "stage" }, { staged, "from", is, ie, "unstage" } }
+  elseif role == "index" then
+    cands = { { staged, "from", s, e, "unstage" }, { unstaged, "from", s, e, "stage" } }
+  else
+    local is, ie = hunks.map_line(staged, s, "to"), hunks.map_line(staged, e, "to")
+    cands = { { staged, "to", s, e, "unstage" }, { unstaged, "from", is, ie, "stage" } }
+  end
+  local op
+  for _, c in ipairs(cands) do
+    if c[3] and c[4] then
+      local picked = hunks.select_lines(c[1], c[2], c[3], c[4])
+      if #picked > 0 then
+        op = { hs = c[1], picked = picked, side = c[2], s = c[3], e = c[4], direction = c[5] }
+        break
+      end
+    end
+  end
+  if not op and mode ~= "line" then
+    -- next to filler lines: the removal shown there
+    for _, c in ipairs(cands) do
+      if c[3] and c[4] then
+        local picked = hunks.select(c[1], c[2], c[3], c[4])
+        if #picked > 0 then
+          op = { hs = c[1], picked = picked, side = c[2], s = c[3], e = c[4], direction = c[5] }
+          break
+        end
+      end
+    end
+  end
+  if not op then
+    util.info(mode == "line" and "no changed line under the cursor (- for the hunk)" or "no change under the cursor")
+    return
+  end
+  local selected = {}
+  for _, h in ipairs(op.picked) do
+    if mode == "hunk" then
+      selected[h] = true
+    else
+      selected[h] = { side = op.side, s = op.s, e = op.e, exact = mode == "line" }
+    end
+  end
+  local stage = op.direction == "stage"
+  local to, to_fmt = stage and wt or head, stage and wt_fmt or head_fmt
+  local result, last = hunks.apply(index, to, op.hs, selected)
+  local target = stage and entry.sides.worktree or entry.sides.head
+  local was_class = self.stagectl and self.stagectl:class_at(role, s)
+  local before_text = api.nvim_buf_get_lines(api.nvim_win_get_buf(ctx.win), s - 1, s, false)[1]
+  local ok
+  if target.kind == "empty" and #result == 0 then
+    -- staging a deleted file / unstaging an added one: remove the index entry
+    ok = self:remove_from_index(entry.path)
+  else
+    local noeol = hunks.noeol(index, to, last, idx_fmt.noeol, to_fmt.noeol)
+    local fmt
+    if stage then
+      fmt = { filters = true, crlf = wt_fmt.crlf, noeol = noeol }
+    else
+      local crlf = idx_fmt.crlf
+      if entry.sides.index.kind == "empty" then
+        crlf = head_fmt.crlf
+      end
+      fmt = { filters = false, crlf = crlf, noeol = noeol }
+      if entry.sides.index.kind == "empty" and self.head then
+        fmt.mode = git.tree_mode(self.repo, self.head, entry.oldpath or entry.path)
+      end
+    end
+    ok = self:write_index(entry, result, fmt)
+  end
+  if not ok then
+    return
+  end
+  -- columns follow the new state (only staging may take a column away)
+  self.allow_collapse = true
+  self:refresh()
+  self.allow_collapse = false
+  if self.stagectl then
+    self.stagectl:update()
+  end
+  local win = self.layout.wins[role]
+  if not util.win_valid(win) then
+    -- the column went away (nothing left to show in it): same text in the one that stays
+    win = self:main_win()
+    if util.win_valid(win) then
+      local line = s
+      local takeover = self.layout:role_of(win)
+      if role == "index" and takeover == "worktree" then
+        local new_index = self:stage_lines(self.current, "index")
+        local new_wt = self:stage_lines(self.current, "worktree")
+        line = hunks.map_line_near(hunks.compute(new_index, new_wt, opts), s, "from")
+      end
+      api.nvim_set_current_win(win)
+      local n = api.nvim_buf_line_count(api.nvim_win_get_buf(win))
+      pcall(api.nvim_win_set_cursor, win, { math.max(1, math.min(line, n)), 0 })
+    end
+    return
+  end
+  api.nvim_set_current_win(win)
+  local count = api.nvim_buf_line_count(api.nvim_win_get_buf(win))
+  pcall(api.nvim_win_set_cursor, win, { math.min(s, count), 0 })
+  if mode == "line" then
+    if self.stagectl then
+      local classes = (was_class == "staged" or (not was_class and not stage)) and { "staged", "mixed" }
+        or { "unstaged", "mixed" }
+      -- the toggled line itself is still there: continue below it
+      local now = api.nvim_buf_get_lines(api.nvim_win_get_buf(win), s - 1, s, false)[1]
+      local from = now == before_text and s + 1 or s
+      local line = self.stagectl:next_line(role, from, classes) or self.stagectl:next_line(role, 1, classes)
+      if line then
+        pcall(api.nvim_win_set_cursor, win, { math.min(line, count), 0 })
+      end
+    else
+      self:cursor_to_next_change(win, s)
     end
   end
 end
@@ -651,29 +917,23 @@ function StatusView:cursor_to_next_change(win, from)
 end
 
 --- Writes new index content for the entry's path.
-function StatusView:write_index(entry, lines, direction, noeol)
+---@param fmt { filters: boolean, crlf?: boolean, noeol?: boolean, mode?: string }
+---   filters: content is in working tree form (clean filters apply, like `git add`)
+function StatusView:write_index(entry, lines, fmt)
   local repo = self.repo
   local path = entry.path
   local existing = git.index_entries(repo, path)[0]
-  local mode = existing and existing.mode
-  local content, filters
-  if direction == "stage" then
-    local wt = self.infos.b
-    local buf = wt.buf
-    local dos = wt.src.kind ~= "empty" and vim.bo[buf].fileformat == "dos"
-    content = util.join_lines(lines, dos, noeol)
-    filters = true
-    if not mode then
+  local mode = existing and existing.mode or fmt.mode
+  if not mode then
+    if fmt.filters then
       local stat = vim.uv.fs_stat(git.abspath(repo, path))
       mode = (stat and bit.band(stat.mode, 73) ~= 0) and "100755" or "100644"
+    else
+      mode = "100644"
     end
-  else
-    local idx = self.infos.b
-    content = util.join_lines(lines, idx.crlf, noeol)
-    filters = false
-    mode = mode or "100644"
   end
-  local oid, err = git.hash_object(repo, content, path, filters)
+  local content = util.join_lines(lines, fmt.crlf, fmt.noeol)
+  local oid, err = git.hash_object(repo, content, path, fmt.filters)
   if not oid then
     util.err("git hash-object failed: " .. (err or ""))
     return false

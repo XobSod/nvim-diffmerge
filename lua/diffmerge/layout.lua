@@ -32,6 +32,15 @@ local arrangements = {
 
 M.arrangements = arrangements
 
+-- "stage" (status view: HEAD | WORKING TREE | INDEX) shows a varying subset of columns,
+-- arranged like the 2-way diff layouts
+local STAGE_NAMES = { side_by_side = true, stacked = true }
+
+--- Layout name for a kind (the stage view follows the diff setting).
+function M.default_name(kind)
+  return config.options.layout[kind] or config.options.layout.diff
+end
+
 local function scratch_placeholder()
   local buf = api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "wipe"
@@ -69,7 +78,7 @@ function M.new(opts)
   local self = setmetatable({
     tab = api.nvim_get_current_tabpage(),
     kind = opts.kind,
-    name = opts.name or config.options.layout[opts.kind],
+    name = opts.name or M.default_name(opts.kind),
     wins = {},
     roles = {},
   }, Layout)
@@ -100,13 +109,22 @@ end
 
 --- Splits `first` into the diff windows of the current layout.
 function Layout:build(first)
-  local arrangement = arrangements[self.kind][self.name]
-  self.roles = arrangement.roles
+  if self.kind == "stage" then
+    self.roles = vim.deepcopy(self.stage_roles)
+  else
+    self.roles = arrangements[self.kind][self.name].roles
+  end
   self.wins = {}
   local r = self.roles
   api.nvim_set_current_win(first)
   self.wins[r[1]] = first
-  if self.kind == "diff" then
+  if self.kind == "stage" then
+    local cmd = self.name == "stacked" and "rightbelow split" or "rightbelow vsplit"
+    for i = 2, #r do
+      vim.cmd(cmd)
+      self.wins[r[i]] = api.nvim_get_current_win()
+    end
+  elseif self.kind == "diff" then
     local cmd = self.name == "stacked" and "rightbelow split" or "rightbelow vsplit"
     vim.cmd(cmd)
     self.wins[r[2]] = api.nvim_get_current_win()
@@ -199,14 +217,20 @@ end
 
 --- Changes the arrangement (kind may change too: diff <-> merge). Diff windows are rebuilt;
 --- panels stay. Returns false when nothing had to change.
-function Layout:set(kind, name)
-  name = name or config.options.layout[kind]
-  if kind == self.kind and name == self.name and self:complete() then
+---@param roles? string[] columns of a "stage" layout
+function Layout:set(kind, name, roles)
+  name = name or M.default_name(kind)
+  if kind == "stage" and not STAGE_NAMES[name] then
+    name = "side_by_side"
+  end
+  local same_roles = kind ~= "stage" or vim.deep_equal(roles, self.roles)
+  if kind == self.kind and name == self.name and same_roles and self:complete() then
     return false
   end
   local keep = self:collapse()
   self.kind = kind
   self.name = name
+  self.stage_roles = roles
   self:build(keep)
   return true
 end

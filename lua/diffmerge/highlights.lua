@@ -52,6 +52,13 @@ local function defaults()
     DiffMergeResolved = { bg = M.blend(palette.green, bg, a - 0.06) },
     DiffMergeEdited = { bg = M.blend(palette.violet, bg, a - 0.06) },
     DiffMergeNone = {},
+    -- status view columns: HEAD | WORKING TREE | INDEX
+    DiffMergeUnstaged = { bg = M.blend(palette.yellow, bg, a - 0.08) },
+    DiffMergeStaged = { bg = M.blend(palette.green, bg, a - 0.06) },
+    DiffMergeMixed = { bg = M.blend(palette.violet, bg, a - 0.04) },
+    DiffMergeUnstagedSign = { fg = palette.yellow, bold = true },
+    DiffMergeStagedSign = { fg = palette.green, bold = true },
+    DiffMergeMixedSign = { fg = palette.violet, bold = true },
     DiffMergeConflictSign = { fg = palette.red, bold = true },
     DiffMergeResolvedSign = { fg = palette.green, bold = true },
     DiffMergeEditedSign = { fg = palette.violet, bold = true },

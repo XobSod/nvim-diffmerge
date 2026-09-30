@@ -365,6 +365,12 @@ function M.index_entries(repo, path)
   return entries
 end
 
+--- Mode of a path in a tree-ish ("100644", "100755", ...), nil if missing.
+function M.tree_mode(repo, rev, path)
+  local out = M.output(repo, { "ls-tree", "-z", rev, "--", ":(literal)" .. path })
+  return out and out:match("^(%d+) ") or nil
+end
+
 --- Operation in progress: merge / rebase / cherry-pick / revert (or nil).
 ---@return { kind: string, theirs?: string, onto?: string }|nil
 function M.operation(repo)

@@ -23,8 +23,9 @@ function M.rev(rev, path, label)
   return { kind = "rev", rev = rev, path = path, label = label }
 end
 
-function M.index(path)
-  return { kind = "index", path = path, label = "INDEX" }
+---@param opts? { readonly?: boolean } read-only: a plain view, no `:w` to the index
+function M.index(path, opts)
+  return { kind = "index", path = path, label = "INDEX", readonly = opts and opts.readonly or nil }
 end
 
 function M.stage(n, path, label)
@@ -68,7 +69,7 @@ local function key_of(repo, src)
   if src.kind == "rev" then
     return ("rev:%s:%s:%s"):format(root, src.rev, src.path)
   elseif src.kind == "index" then
-    return ("index:%s:%s"):format(root, src.path)
+    return ("index%s:%s:%s"):format(src.readonly and "-ro" or "", root, src.path)
   elseif src.kind == "stage" then
     return ("stage:%s:%d:%s"):format(root, src.stage, src.path)
   elseif src.kind == "worktree" then
@@ -164,15 +165,17 @@ local function create_scratch(repo, src)
   local info = { buf = buf, scratch = true, created = true, editable = false, repo = repo, src = src }
   if src.kind == "empty" then
     vim.bo[buf].modifiable = false
+    info.empty = true
     return info
   end
   local lines, flags = load_git(repo, src)
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  info.empty = #lines == 0
   info.binary = flags.binary
   info.crlf = flags.crlf
   info.noeol = flags.noeol
   info.special = flags.binary or flags.submodule or flags.missing
-  if src.kind == "index" and not info.special then
+  if src.kind == "index" and not info.special and not src.readonly then
     vim.bo[buf].buftype = "acwrite"
     vim.bo[buf].undolevels = -123456 -- use global value
     vim.bo[buf].modifiable = true
@@ -193,8 +196,26 @@ local function create_scratch(repo, src)
   return info
 end
 
+--- Read-only placeholder shown instead of a real buffer.
+local function placeholder(src, text)
+  local buf = api.nvim_create_buf(false, true)
+  api.nvim_buf_set_lines(buf, 0, -1, false, { text })
+  vim.bo[buf].modifiable = false
+  return { buf = buf, scratch = true, created = true, special = true, editable = false, src = src }
+end
+
 local function create_real(repo, src)
   local abs = src.kind == "worktree" and vim.fs.joinpath(repo.root, src.path) or src.abspath
+  local lstat = vim.uv.fs_lstat(abs)
+  if lstat and lstat.type == "link" then
+    -- git stores the link target, not the file it points to
+    return placeholder(src, "Symbolic link → " .. (vim.uv.fs_readlink(abs) or "?"))
+  end
+  if lstat and lstat.type == "directory" then
+    -- a submodule: git compares its checked out commit
+    local sha = git.line(abs, { "rev-parse", "HEAD" })
+    return placeholder(src, sha and ("Subproject commit " .. sha) or ("Directory " .. (src.path or abs)))
+  end
   -- binary files are not loaded into a real buffer
   local stat = vim.uv.fs_stat(abs)
   if stat and stat.type == "file" then
@@ -204,10 +225,9 @@ local function create_real(repo, src)
       f:close()
     end
     if util.is_binary(head) then
-      local buf = api.nvim_create_buf(false, true)
-      api.nvim_buf_set_lines(buf, 0, -1, false, { ("Binary file %s (%d bytes)"):format(src.path or abs, stat.size) })
-      vim.bo[buf].modifiable = false
-      return { buf = buf, scratch = true, created = true, binary = true, special = true, editable = false, src = src }
+      local info = placeholder(src, ("Binary file %s (%d bytes)"):format(src.path or abs, stat.size))
+      info.binary = true
+      return info
     end
   end
   local existed = vim.fn.bufexists(abs) == 1
@@ -303,7 +323,7 @@ function M.reload(info)
     return
   end
   local lines, flags = load_git(info.repo, info.src)
-  local current = api.nvim_buf_get_lines(info.buf, 0, -1, false)
+  local current = util.buf_lines(info.buf, info)
   if util.lines_equal(current, lines) then
     return
   end
@@ -314,6 +334,7 @@ function M.reload(info)
   end
   util.set_lines(info.buf, lines)
   info.crlf, info.noeol = flags.crlf, flags.noeol
+  info.empty = #lines == 0
   if info.editable then
     vim.bo[info.buf].modified = false
   end

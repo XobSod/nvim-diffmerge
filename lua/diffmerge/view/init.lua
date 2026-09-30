@@ -138,6 +138,9 @@ local function source_fingerprint(entry)
     parts[#parts + 1] = role .. "=" .. src.kind .. ":" .. (src.rev or "") .. ":" .. (src.path or src.abspath or "")
   end
   table.sort(parts)
+  if entry.columns then
+    parts[#parts + 1] = "columns=" .. table.concat(entry.columns, ",")
+  end
   return table.concat(parts, "|")
 end
 
@@ -251,6 +254,10 @@ function View:detach_entry()
     self.merge:detach()
     self.merge = nil
   end
+  if self.stagectl then
+    self.stagectl:detach()
+    self.stagectl = nil
+  end
 end
 
 local function escape_bar(s)
@@ -265,12 +272,20 @@ function View:winbar_for(role, info, entry)
   if entry and src.kind ~= "empty" and path == entry.path and src.kind ~= "file" then
     path = entry.path
   end
-  local parts = { "%#DiffMergeWinbarLabel# ", escape_bar(label) }
+  -- %<: when too narrow, cut what follows the label, never the label itself
+  local parts = { "%#DiffMergeWinbarLabel# ", escape_bar(label), "%<" }
   if src.kind ~= "empty" and path ~= "" then
     parts[#parts + 1] = "%#DiffMergeWinbarInfo# · " .. escape_bar(path)
   end
   if info.editable then
     parts[#parts + 1] = " %#DiffMergeWinbarEdit#%m"
+  end
+  if self.stagectl and (role == "worktree" or role == "index") then
+    local n = self.stagectl:count(role == "worktree" and "unstaged" or "staged")
+    if n > 0 then
+      local hl = role == "worktree" and "DiffMergeUnstagedSign" or "DiffMergeStagedSign"
+      parts[#parts + 1] = ("%%#%s# · %d %s"):format(hl, n, role == "worktree" and "unstaged" or "staged")
+    end
   end
   if role == "merged" and self.merge then
     local st = self.merge:stats()
@@ -300,10 +315,31 @@ end
 ---@param opts? { focus?: boolean, force?: boolean }
 function View:show_entry(entry, opts)
   opts = opts or {}
-  if not self.layout:is_valid() then
+  if not entry or not self.layout:is_valid() then
     return
   end
   if entry == self.current and not opts.force and self.layout:complete() then
+    if opts.focus then
+      self:focus_main()
+    end
+    return
+  end
+  if
+    self.current
+    and not opts.force
+    and self.layout:complete()
+    and source_fingerprint(entry) == source_fingerprint(self.current)
+  then
+    -- the same buffers and columns (e.g. the Staged and Unstaged entry of one file):
+    -- keep the windows, cursor and overlay as they are
+    self.current = entry
+    if self.files then
+      self.files:render()
+      if api.nvim_get_current_win() ~= self.layout.files_win or opts.sync_cursor then
+        self.files:set_cursor_to(entry)
+      end
+    end
+    self:update_winbars()
     if opts.focus then
       self:focus_main()
     end
@@ -315,7 +351,7 @@ function View:show_entry(entry, opts)
   self:detach_entry()
 
   local kind = entry.kind
-  self.layout:set(kind, self.layout_names[kind] or config.options.layout[kind])
+  self.layout:set(kind, self.layout_names[kind] or layout_mod.default_name(kind), entry.columns)
 
   local infos = {}
   for _, role in ipairs(self.layout.roles) do
@@ -366,17 +402,19 @@ function View:show_entry(entry, opts)
   end
   for _, info in pairs(infos) do
     keymaps.apply(info.buf, "view", handler)
-    if kind == "diff" then
+    if kind == "merge" then
+      keymaps.apply(info.buf, "merge", handler)
+    else
       keymaps.apply(info.buf, "diff", handler, function(action)
         return self:supports(action, "diff")
       end)
-    else
-      keymaps.apply(info.buf, "merge", handler)
     end
   end
 
   if kind == "merge" and not special then
     self.merge = require("diffmerge.merge").attach(self, entry, infos)
+  elseif kind == "stage" and not special and #self.layout.roles == 3 then
+    self.stagectl = require("diffmerge.stage").attach(self, entry, infos)
   end
   self:update_winbars()
 
@@ -445,7 +483,7 @@ end
 --- Window where the user usually works: the merged / right side.
 function View:main_win()
   local wins = self.layout.wins
-  return wins.merged or wins.b or wins[self.layout.roles[1]]
+  return wins.merged or wins.worktree or wins.b or wins.index or wins[self.layout.roles[1]]
 end
 
 function View:focus_main()
@@ -458,6 +496,10 @@ end
 function View:goto_first_change()
   if self.merge then
     self.merge:goto_first()
+    return
+  end
+  if self.stagectl then
+    self.stagectl:goto_first()
     return
   end
   local win = self:main_win()

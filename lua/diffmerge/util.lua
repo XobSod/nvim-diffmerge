@@ -136,6 +136,47 @@ function M.dirname(path)
   return d
 end
 
+--- Lines of a buffer; an empty buffer gives {} (nvim_buf_get_lines returns { "" } for it,
+--- which would add a line). Scratch buffers loaded by DiffMerge know it (`info.empty`).
+---@param info? { empty?: boolean, scratch?: boolean }
+function M.buf_lines(buf, info)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if #lines == 1 and lines[1] == "" then
+    local empty
+    if info and info.scratch then
+      empty = info.empty == true
+    else
+      empty = vim.api.nvim_buf_call(buf, function()
+        return vim.fn.line2byte(vim.fn.line("$") + 1) == -1
+      end)
+    end
+    if empty then
+      return {}
+    end
+  end
+  return lines
+end
+
+--- Limits a namespace's extmarks to the given windows of an owner (a view): overlays on
+--- real file buffers must not show in the user's other windows on the same file.
+--- (nvim__ns_set is experimental; without it the marks show everywhere, as before.)
+local scoped = {}
+function M.scope_ns(ns, owner, wins)
+  scoped[ns] = scoped[ns] or {}
+  scoped[ns][owner] = wins
+  local all = {}
+  for _, list in pairs(scoped[ns]) do
+    for _, w in ipairs(list or {}) do
+      if vim.api.nvim_win_is_valid(w) then
+        all[#all + 1] = w
+      end
+    end
+  end
+  if vim.api.nvim__ns_set then
+    pcall(vim.api.nvim__ns_set, ns, { wins = all })
+  end
+end
+
 --- Buffer with exactly this name (vim.fn.bufnr() also accepts partial matches).
 function M.find_buf(name)
   for _, b in ipairs(vim.api.nvim_list_bufs()) do

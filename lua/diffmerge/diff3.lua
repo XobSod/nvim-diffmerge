@@ -20,11 +20,14 @@ local function text(lines)
 end
 
 --- base -> other hunks as { bs, be, os, oe } (0-based, end-exclusive).
-local function hunks(base, other, algorithm)
+local function hunks(base, other, algorithm, indent_heuristic)
+  if indent_heuristic == nil then
+    indent_heuristic = true
+  end
   local idx = vim.text.diff(text(base), text(other), {
     result_type = "indices",
     algorithm = algorithm or config.options.diff.algorithm,
-    indent_heuristic = true,
+    indent_heuristic = indent_heuristic,
   })
   local out = {}
   for _, h in ipairs(idx or {}) do
@@ -62,8 +65,8 @@ end
 ---@return diffmerge.Chunk[]
 function M.compute(base, loc, rem, opts)
   opts = opts or {}
-  local d1 = hunks(base, loc, opts.algorithm)
-  local d2 = hunks(base, rem, opts.algorithm)
+  local d1 = hunks(base, loc, opts.algorithm, opts.indent_heuristic)
+  local d2 = hunks(base, rem, opts.algorithm, opts.indent_heuristic)
   local chunks = {}
   local i, j = 1, 1
   local bpos, lpos, rpos = 0, 0, 0

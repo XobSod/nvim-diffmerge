@@ -78,6 +78,57 @@ function M.display_opts(with_linematch)
   return o
 end
 
+--- Swaps the sides of hunks: the hunks of b -> a, with the boundaries of a -> b. Used so
+--- hunks have the same boundaries as the diff on screen (xdiff is not symmetric).
+function M.invert(list)
+  local out = {}
+  for i, h in ipairs(list) do
+    out[i] = { as = h.bs, ac = h.bc, bs = h.as, bc = h.ac }
+  end
+  return out
+end
+
+--- The line of the other side that shows the same text as `line` of `side` (nil when `line`
+--- is part of a hunk, i.e. has no unchanged counterpart).
+function M.map_line(hunks, line, side)
+  if not line then
+    return nil
+  end
+  local delta = 0
+  for _, h in ipairs(hunks) do
+    local first, last = side_range(h, side)
+    if line < first then
+      break
+    end
+    if first <= last and line <= last then
+      return nil
+    end
+    if side == "to" then
+      delta = delta + h.ac - h.bc
+    else
+      delta = delta + h.bc - h.ac
+    end
+  end
+  return line + delta
+end
+
+--- Like map_line, but a line inside a hunk maps to the start of the hunk on the other side.
+function M.map_line_near(hunks, line, side)
+  local mapped = M.map_line(hunks, line, side)
+  if mapped then
+    return mapped
+  end
+  for _, h in ipairs(hunks) do
+    local first, last = side_range(h, side)
+    if first <= line and line <= last then
+      local other = side == "from" and "to" or "from"
+      local ofirst = side_range(h, other)
+      return math.max(1, ofirst)
+    end
+  end
+  return line
+end
+
 --- Hunks that have lines inside [s, e] on `side` (hunks that are only filler lines on that
 --- side do not count).
 function M.select_lines(hunks, side, s, e)
@@ -116,26 +167,27 @@ end
 ---@param to string[] desired content (e.g. working tree)
 ---@param hunks diffmerge.Hunk[] all hunks between from and to
 ---@param selected table<diffmerge.Hunk, true|{ side: "from"|"to", s: integer, e: integer, exact?: boolean }>
----@return string[] lines, boolean tail_from_to the end of the result comes from `to`
----        (a selected hunk reaches the end of `from`): use `to`'s final-newline state
+---@return string[] lines, { src: "from"|"to", idx: integer }? last where the last line came
+---        from (its final-newline state is the result's; nil for an empty result)
 function M.apply(from, to, hunks, selected)
   local out = {}
+  local last
+  local function emit(src, idx)
+    out[#out + 1] = (src == "to" and to or from)[idx]
+    last = { src = src, idx = idx }
+  end
   local pos = 1 -- next line of `from` to copy
-  local tail_from_to = false
   for _, h in ipairs(hunks) do
     local sel = selected[h]
     if sel then
       local a_first = h.ac == 0 and h.as + 1 or h.as
       local b_first = h.bc == 0 and h.bs + 1 or h.bs
-      if a_first + h.ac - 1 >= #from then
-        tail_from_to = true
-      end
       for i = pos, a_first - 1 do
-        out[#out + 1] = from[i]
+        emit("from", i)
       end
       if sel == true then
         for i = h.bs, h.bs + h.bc - 1 do
-          out[#out + 1] = to[i]
+          emit("to", i)
         end
       else
         -- partial: offsets inside the hunk that are selected on the chosen side;
@@ -158,10 +210,10 @@ function M.apply(from, to, hunks, selected)
         for k = 0, math.max(h.ac, h.bc) - 1 do
           if k >= s_off and k <= e_off then
             if k < h.bc then
-              out[#out + 1] = to[h.bs + k]
+              emit("to", h.bs + k)
             end
           elseif k < h.ac then
-            out[#out + 1] = from[a_first + k]
+            emit("from", a_first + k)
           end
         end
       end
@@ -169,9 +221,21 @@ function M.apply(from, to, hunks, selected)
     end
   end
   for i = pos, #from do
-    out[#out + 1] = from[i]
+    emit("from", i)
   end
-  return out, tail_from_to
+  return out, last
+end
+
+--- Final-newline state of an apply() result: that of the source its last line came from,
+--- if it was that source's last line; any other line has a newline after it.
+function M.noeol(from, to, last, from_noeol, to_noeol)
+  if not last then
+    return false
+  end
+  if last.src == "to" then
+    return last.idx == #to and to_noeol == true
+  end
+  return last.idx == #from and from_noeol == true
 end
 
 return M

@@ -3,9 +3,10 @@
 Diff, merge and browse git history in Neovim, built on Vim's own diff mode. Pure Lua, no
 dependencies, Neovim 0.12+.
 
-- **Status view** — Conflicts / Staged / Unstaged / Untracked, like `git status`; stage files
-  or hunks with `-`, the line under the cursor with `<Space>` (lazygit style), selected lines
-  in visual mode; the index is an editable buffer.
+- **Status view** — Conflicts / Staged / Unstaged / Untracked, like `git status`. Files open as
+  `HEAD | WORKING TREE | INDEX` (only the columns that differ); `<Space>` toggles the line
+  under the cursor between unstaged and staged (lazygit style), `-` the hunk, visual mode the
+  selection — the change stays in view and changes colour.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.
 - **Merges, meld-style** — auto-merged result in the middle, conflicts show the base text;
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),
@@ -71,6 +72,29 @@ Neovim.
 ## Documentation
 
 `:help diffmerge` — commands, views, keymaps (`g?` in any view), configuration, highlights.
+
+## Compatibility
+
+### Breadcrumb plugins (winbar)
+
+DiffMerge labels every side in the window bar (`WORKING TREE`, `INDEX`, `LOCAL · ours · main`, …).
+Breadcrumb plugins that write the winbar of any window with an LSP client can overwrite the label
+of working-tree files. lspsaga means to leave diff windows alone but only checks when it
+attaches to a buffer; this makes it check every time it draws:
+
+```lua
+-- after require("lspsaga").setup(opts)
+local crumbs = require("lspsaga").config.symbol_in_winbar
+local enabled = crumbs.enable
+crumbs.enable = nil
+setmetatable(crumbs, {
+  __index = function(_, key)
+    if key == "enable" then
+      return enabled and not vim.wo.diff -- no breadcrumbs in diff windows
+    end
+  end,
+})
+```
 
 ## Tests
 

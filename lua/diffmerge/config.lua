@@ -34,6 +34,12 @@ M.defaults = {
   merge = {
     virtual_text = true, -- conflict hints at the end of the first line of a conflict
   },
+  status = {
+    -- tracked files open as HEAD | WORKING TREE | INDEX (only the columns that differ; a column
+    -- appears as soon as staging needs it). false: separate Staged (HEAD | INDEX) and
+    -- Unstaged (INDEX | WORKING TREE) diffs.
+    three_way = true,
+  },
   auto_preview = true, -- moving the cursor in a panel shows the entry under it
   preview_debounce = 80, -- ms
   watch = true, -- refresh status views on changes inside the git dir
@@ -153,6 +159,7 @@ function M.setup(opts)
 end
 
 function M.layouts(kind)
+  -- "diff" and "stage" (status view columns) share the 2-way names
   if kind == "merge" then
     return { "side_by_side", "stacked", "four_way" }
   end

@@ -234,7 +234,7 @@ local function buf_lines(info)
   if not info or info.src.kind == "empty" then
     return {}
   end
-  return api.nvim_buf_get_lines(info.buf, 0, -1, false)
+  return util.buf_lines(info.buf, info)
 end
 
 local function key_hint()
@@ -345,6 +345,8 @@ function M.attach(view, entry, infos)
       vim.wo[win].winhighlight = MUTE
     end
   end
+  -- the merged file may be open in other windows too: colours and signs only here
+  util.scope_ns(ns_hl, view, view.layout:diff_wins())
   -- the key hint follows the conflict under the cursor
   self.augroup = api.nvim_create_augroup("DiffMergeMerge" .. self.buf, { clear = true })
   local bufs = { self.buf }
@@ -430,6 +432,7 @@ end
 function Controller:detach()
   self.detached = true
   M.restore_linematch()
+  util.scope_ns(ns_hl, self.view, nil)
   if self.augroup then
     pcall(api.nvim_del_augroup_by_id, self.augroup)
     self.augroup = nil

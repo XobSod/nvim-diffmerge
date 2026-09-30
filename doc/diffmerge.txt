@@ -102,6 +102,10 @@ With lazy.nvim: >lua
 Every view is a tabpage: file panel on the left, log panel at the bottom (log
 views), diff windows in the rest. Closing the tab closes the view.
 
+Every side is labelled in its window bar. Breadcrumb plugins that write the
+winbar of LSP buffers (e.g. lspsaga's symbol_in_winbar) should skip diff
+windows; see the Compatibility section of the README for lspsaga.
+
                                                             *diffmerge-layouts*
 Layouts describe how the windows are arranged:
 
@@ -114,27 +118,48 @@ Layouts describe how the windows are arranged:
 ------------------------------------------------------------------------------
 STATUS                                                       *diffmerge-status*
 
-  Section      Left       Right                   git
-  Conflicts    stages     working tree (merged)   unmerged paths
-  Staged       HEAD       index (editable)        git diff --staged
-  Unstaged     index      working tree            git diff
-  Untracked    nothing    working tree
+The file panel lists what `git status` shows: Conflicts / Staged (`git diff
+--staged`) / Unstaged (`git diff`) / Untracked. A changed file opens as
+
+  HEAD | WORKING TREE | INDEX
+  what was   what you work on   what will be committed
+  read-only  editable           (the index)
+
+with only the columns that differ: nothing staged yet shows HEAD | WORKING
+TREE, everything staged shows HEAD | INDEX. The columns follow every (un)stage:
+the column a change moves into always appears, so a line you (un)stage stays
+in view, and a column that became identical to its neighbour goes away. Only
+(un)staging removes a column: saving a file, unsaved edits or changes made
+elsewhere (lazygit, a terminal) never close the window you work in. The INDEX
+column is read-only here. A file listed under both Staged and Unstaged opens
+the same view.
+
+Binary files, symlinks (shown as "Symbolic link → target") and submodules
+("Subproject commit …") are staged as a whole from the file panel.
+
+With three columns each change is painted by its state (Vim's own colours
+would compare every column with every other):
+
+  U  amber   unstaged: only in the working tree
+  S  green   staged: the index has it
+  ±  violet  mixed: the index holds another version (e.g. partly staged)
 
 Staging:
-- `-` in the file panel stages / unstages the file, directory or section
-  under the cursor (visual: every line). On a conflict it marks the file
-  resolved (`git add`) after checking for unresolved conflicts / markers.
-- `-` in a diff window stages the hunk under the cursor (Unstaged /
-  Untracked) or unstages it (Staged). In visual mode only the selected lines.
-- `<Space>` in a diff window stages / unstages only the line under the cursor
-  (lazygit style) and moves on to the next changed line, so pressing it again
-  walks through the changes. A changed line goes together with the line shown
-  next to it on the other side (the alignment on screen, 'diffopt' linematch
-  included). Removed lines are staged from the window that shows them (INDEX
-  for unstaged changes). `<Space>` in the file panel works like `-`.
-- `S` stages everything, `U` unstages everything, `X` discards unstaged
-  changes / deletes untracked files (asks first).
-- The INDEX buffer is editable; |:w| writes it to the index.
+- `<Space>` toggles the line under the cursor between unstaged and staged, in
+  any column, then moves on to the next change of the same state, so pressing
+  it again walks through them (lazygit style). A changed line goes together
+  with the line shown next to it (the alignment on screen).
+- `-` toggles the whole hunk; visual `-` / `<Space>` the selected lines.
+- File panel: `-` / `<Space>` stage / unstage the file, directory or section
+  (visual: every line). On a conflict it marks the file resolved (`git add`)
+  after checking for unresolved conflicts / markers. `S` stages everything,
+  `U` unstages everything, `X` discards unstaged changes / deletes untracked
+  files (asks first).
+
+`status.three_way = false` switches back to separate two-way diffs: Staged is
+HEAD | INDEX, Unstaged is INDEX | WORKING TREE (the INDEX side is editable
+there and |:w| writes it to the index); `-` / `<Space>` then stage in Unstaged
+and unstage in Staged.
 
 The view refreshes when files are written, when Neovim gets focus and when the
 git directory changes (e.g. lazygit or a terminal).
@@ -301,7 +326,8 @@ Defaults: >lua
         follow_renames = true,
         max_count = nil,
       },
-      diff = { algorithm = "histogram" },  -- merge chunks / hunk staging
+      status = { three_way = true },     -- HEAD | WORKING TREE | INDEX
+      diff = { algorithm = "histogram" },  -- merge chunks
       merge = { virtual_text = true },
       auto_preview = true,     -- moving in a panel shows the entry
       preview_debounce = 80,
@@ -324,6 +350,7 @@ Defined with `default = true` (override them in your colorscheme / config).
 Conflict colours are blended from the Normal background.
 
   DiffMergeConflict / Resolved / Edited      merge chunk backgrounds
+  DiffMergeUnstaged / Staged / Mixed         status columns (+ ...Sign)
   DiffMergeAdd / Change                      auto-merged chunks (-> DiffAdd…)
   DiffMergeConflictSign / ResolvedSign / EditedSign / LocalSign / RemoteSign
   DiffMergeStatusAdded / Modified / Deleted / Renamed / Unmerged / Untracked

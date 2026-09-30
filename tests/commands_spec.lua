@@ -56,7 +56,10 @@ H.describe(":DiffMerge", function()
     vim.cmd("DiffMerge files")
     H.ok(v.layout.files_win and api.nvim_win_is_valid(v.layout.files_win), "panel back")
     H.eq(api.nvim_win_get_buf(v.layout.files_win), v.files.buf)
-    H.ok(vim.wo[v.layout.wins.a].diff and vim.wo[v.layout.wins.b].diff, "diff windows rebuilt")
+    H.eq(#v.layout:diff_wins(), 2)
+    for _, w in ipairs(v.layout:diff_wins()) do
+      H.ok(vim.wo[w].diff, "diff windows rebuilt")
+    end
   end)
 
   H.it("close_all closes every view", function()

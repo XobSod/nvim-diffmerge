@@ -511,7 +511,19 @@ end
 -- Hunk / line staging
 ---------------------------------------------------------------------------
 
+--- `-`: the hunk under the cursor (visual: the selected lines).
 function StatusView:action_toggle_stage_hunk(ctx)
+  self:stage_change(ctx, ctx.range and "lines" or "hunk")
+end
+
+--- `<Space>`: only the line under the cursor (lazygit style), then on to the next change.
+--- A changed line is staged together with the line shown next to it on the other side.
+function StatusView:action_toggle_stage_line(ctx)
+  self:stage_change(ctx, ctx.range and "lines" or "line")
+end
+
+---@param mode "hunk"|"lines"|"line"
+function StatusView:stage_change(ctx, mode)
   local entry = self.current
   if not entry or entry.kind ~= "diff" then
     return
@@ -562,15 +574,33 @@ function StatusView:action_toggle_stage_hunk(ctx)
     s = api.nvim_win_get_cursor(ctx.win)[1]
     e = s
   end
-  local all = hunks.compute(from, to)
-  local picked = hunks.select(all, side, s, e)
+  -- blocks as on screen: whole hunks for `-`, linematch-aligned sub-hunks for lines
+  local all = hunks.compute(from, to, hunks.display_opts(mode ~= "hunk"))
+  local picked
+  if mode == "hunk" then
+    picked = hunks.select(all, side, s, e)
+  else
+    picked = hunks.select_lines(all, side, s, e)
+    if #picked == 0 and mode == "lines" then
+      -- only next to filler lines: the deletion shown there
+      picked = hunks.select(all, side, s, e)
+    end
+  end
   if #picked == 0 then
-    util.info("no change under the cursor")
+    if mode == "line" then
+      util.info("no changed line under the cursor (removed lines: <Space> in the other window, or - for the hunk)")
+    else
+      util.info("no change under the cursor")
+    end
     return
   end
   local selected = {}
   for _, h in ipairs(picked) do
-    selected[h] = ctx.range and { side = side, s = s, e = e } or true
+    if mode == "hunk" then
+      selected[h] = true
+    else
+      selected[h] = { side = side, s = s, e = e, exact = mode == "line" }
+    end
   end
   local result, tail_from_to = hunks.apply(from, to, all, selected)
   -- whole-file changes: staging a deletion / unstaging an addition removes the index entry
@@ -596,7 +626,28 @@ function StatusView:action_toggle_stage_hunk(ctx)
   local noeol = tail_from_to and noeol_of(to_info) or noeol_of(from_info)
   if self:write_index(entry, result, direction, noeol) then
     self:refresh()
+    if mode == "line" then
+      self:cursor_to_next_change(ctx.win, s)
+    end
   end
+end
+
+--- Moves the cursor to the first changed line at or below `from` (repeated <Space> walks
+--- through the changes).
+function StatusView:cursor_to_next_change(win, from)
+  if not util.win_valid(win) or not self.layout:role_of(win) then
+    return
+  end
+  api.nvim_win_call(win, function()
+    vim.cmd("diffupdate")
+    local last = api.nvim_buf_line_count(0)
+    for l = math.min(from, last), last do
+      if vim.fn.diff_hlID(l, 1) ~= 0 then
+        api.nvim_win_set_cursor(0, { l, 0 })
+        return
+      end
+    end
+  end)
 end
 
 --- Writes new index content for the entry's path.

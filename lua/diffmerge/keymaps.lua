@@ -12,6 +12,7 @@ M.descriptions = {
   toggle_whitespace = "Toggle ignoring whitespace changes (diffopt iwhite)",
   help = "Show keymaps",
   toggle_stage_hunk = "Stage / unstage hunk (visual: selected lines)",
+  toggle_stage_line = "Stage / unstage the line under the cursor (visual: selected lines)",
   toggle_local = "Toggle LOCAL (mine) in the chunk",
   toggle_base = "Toggle BASE in the chunk",
   toggle_remote = "Toggle REMOTE (theirs) in the chunk",
@@ -45,6 +46,7 @@ M.descriptions = {
 -- actions that also make sense in visual mode
 M.visual = {
   toggle_stage_hunk = true,
+  toggle_stage_line = true,
   select = true,
   toggle_stage = true,
 }

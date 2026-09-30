@@ -18,13 +18,19 @@ end
 
 M.text = text
 
+---@param opts? { algorithm?: string, indent_heuristic?: boolean, linematch?: integer }
 ---@return diffmerge.Hunk[]
 function M.compute(from, to, opts)
   opts = opts or {}
+  local indent = opts.indent_heuristic
+  if indent == nil then
+    indent = true
+  end
   local idx = vim.text.diff(text(from), text(to), {
     result_type = "indices",
     algorithm = opts.algorithm or config.options.diff.algorithm,
-    indent_heuristic = true,
+    indent_heuristic = indent,
+    linematch = opts.linematch,
   })
   local out = {}
   for _, h in ipairs(idx or {}) do
@@ -50,6 +56,41 @@ end
 
 M.side_range = side_range
 
+--- Options that reproduce the blocks of the diff windows ('diffopt'), so "the hunk / line
+--- under the cursor" is exactly what is on screen. With `linematch` a changed block is split
+--- into sub-hunks whose lines are aligned 1:1, like the display.
+---@param with_linematch boolean
+function M.display_opts(with_linematch)
+  local o = { algorithm = "myers", indent_heuristic = false }
+  for _, item in ipairs(vim.opt.diffopt:get()) do
+    local alg = item:match("^algorithm:(%w+)$")
+    if alg then
+      o.algorithm = alg
+    elseif item == "indent-heuristic" then
+      o.indent_heuristic = true
+    elseif with_linematch then
+      local n = item:match("^linematch:(%d+)$")
+      if n then
+        o.linematch = tonumber(n)
+      end
+    end
+  end
+  return o
+end
+
+--- Hunks that have lines inside [s, e] on `side` (hunks that are only filler lines on that
+--- side do not count).
+function M.select_lines(hunks, side, s, e)
+  local out = {}
+  for _, h in ipairs(hunks) do
+    local first, last = side_range(h, side)
+    if first <= last and first <= e and last >= s then
+      out[#out + 1] = h
+    end
+  end
+  return out
+end
+
 --- Hunks touched by lines [s, e] of one side. An empty range (the line above / below
 --- filler lines) counts as touched when the cursor is next to it.
 function M.select(hunks, side, s, e)
@@ -74,7 +115,7 @@ end
 ---@param from string[] current content (e.g. index)
 ---@param to string[] desired content (e.g. working tree)
 ---@param hunks diffmerge.Hunk[] all hunks between from and to
----@param selected table<diffmerge.Hunk, true|{ side: "from"|"to", s: integer, e: integer }>
+---@param selected table<diffmerge.Hunk, true|{ side: "from"|"to", s: integer, e: integer, exact?: boolean }>
 ---@return string[] lines, boolean tail_from_to the end of the result comes from `to`
 ---        (a selected hunk reaches the end of `from`): use `to`'s final-newline state
 function M.apply(from, to, hunks, selected)
@@ -106,8 +147,9 @@ function M.apply(from, to, hunks, selected)
           s_off, e_off = sel.s - b_first, sel.e - b_first
         end
         local side_count = sel.side == "from" and h.ac or h.bc
-        -- nothing to select on that side (filler lines): the whole hunk
-        local full_side = side_count == 0 or (s_off <= 0 and e_off >= side_count - 1)
+        -- nothing to select on that side (filler lines): the whole hunk; a visual selection
+        -- of every line of one side also takes the lines only the other side has
+        local full_side = side_count == 0 or (not sel.exact and s_off <= 0 and e_off >= side_count - 1)
         if full_side then
           s_off, e_off = 0, math.max(h.ac, h.bc) - 1
         end

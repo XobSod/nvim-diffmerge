@@ -3,8 +3,9 @@
 Diff, merge and browse git history in Neovim, built on Vim's own diff mode. Pure Lua, no
 dependencies, Neovim 0.12+.
 
-- **Status view** — Conflicts / Staged / Unstaged / Untracked, like `git status`; stage files,
-  hunks or single lines with `-`; the index is an editable buffer.
+- **Status view** — Conflicts / Staged / Unstaged / Untracked, like `git status`; stage files
+  or hunks with `-`, the line under the cursor with `<Space>` (lazygit style), selected lines
+  in visual mode; the index is an editable buffer.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.
 - **Merges, meld-style** — auto-merged result in the middle, conflicts show the base text;
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),

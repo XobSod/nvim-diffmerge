@@ -126,6 +126,12 @@ Staging:
   resolved (`git add`) after checking for unresolved conflicts / markers.
 - `-` in a diff window stages the hunk under the cursor (Unstaged /
   Untracked) or unstages it (Staged). In visual mode only the selected lines.
+- `<Space>` in a diff window stages / unstages only the line under the cursor
+  (lazygit style) and moves on to the next changed line, so pressing it again
+  walks through the changes. A changed line goes together with the line shown
+  next to it on the other side (the alignment on screen, 'diffopt' linematch
+  included). Removed lines are staged from the window that shows them (INDEX
+  for unstaged changes). `<Space>` in the file panel works like `-`.
 - `S` stages everything, `U` unstages everything, `X` discards unstaged
   changes / deletes untracked files (asks first).
 - The INDEX buffer is editable; |:w| writes it to the index.
@@ -254,6 +260,7 @@ with `keymaps.<group>[lhs] = action | function | false`.
 
 view (every window)         diff (status diff windows)
   ]f / [f  next_file          -        toggle_stage_hunk (visual: lines)
+                              <Space>  toggle_stage_line (visual: lines)
   gl       cycle_layout
   <leader>W toggle_whitespace
   g?       help
@@ -262,7 +269,7 @@ merge                        file_panel                log_panel
   <leader>1 toggle_local       <CR> o  select            <CR>  select
   <leader>2 toggle_base        l       expand            m     mark
   <leader>3 toggle_remote      h       collapse          M     clear_marks
-  <leader>0 take_none          -       toggle_stage      t     toggle_range_mode
+  <leader>0 take_none          - <Space> toggle_stage    t     toggle_range_mode
   dp        put_side
   ]x / [x   next/prev_conflict S       stage_all         P     cycle_parent
   ]c / [c   next/prev_chunk    U       unstage_all       K     commit_details

@@ -61,6 +61,7 @@ M.defaults = {
     -- diff windows of status views (staging)
     diff = {
       ["-"] = "toggle_stage_hunk",
+      ["<Space>"] = "toggle_stage_line",
     },
     -- windows of a merge layout
     merge = {
@@ -80,6 +81,7 @@ M.defaults = {
       ["l"] = "expand",
       ["h"] = "collapse",
       ["-"] = "toggle_stage",
+      ["<Space>"] = "toggle_stage",
       ["S"] = "stage_all",
       ["U"] = "unstage_all",
       ["X"] = "discard",

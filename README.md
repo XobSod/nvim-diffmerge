@@ -102,3 +102,7 @@ setmetatable(crumbs, {
 ./tests/run.sh                  # all specs, headless, against throwaway repositories
 ./tests/run.sh tests/merge_spec.lua
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).

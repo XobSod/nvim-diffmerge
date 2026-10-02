@@ -51,11 +51,15 @@ H.describe("merge regions", function()
   end)
 
   H.it("adjacent regions keep their own resolutions", function()
-    local base = { "a", "b", "c", "d", "e", "f" }
-    local _, view, buf, win = conflict(base, { "a", "F1", "c", "F2", "e", "f" }, { "a", "M1", "c", "M2", "e", "f" })
+    -- far enough apart for git to keep two blocks
+    local base = { "a", "b", "c1", "c2", "c3", "c4", "d", "e", "f" }
+    local function side(x, y)
+      return { "a", x, "c1", "c2", "c3", "c4", y, "e", "f" }
+    end
+    local _, view, buf, win = conflict(base, side("F1", "F2"), side("M1", "M2"))
     api.nvim_set_current_win(win)
     api.nvim_win_set_cursor(win, { 3, 0 })
-    vim.cmd("normal! dd")
+    vim.cmd("normal! 4dd")
     view.merge:sync()
     api.nvim_win_set_cursor(win, { 3, 0 })
     view.merge:toggle(3, { win = win })

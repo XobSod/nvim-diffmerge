@@ -94,7 +94,8 @@ function MergetoolView:exit_code()
   end
   local content = util.read_file(merged.abspath) or ""
   local lines = util.split_lines(content)
-  if merge.has_markers(lines) then
+  local sides = self.merge and self.merge.lines or merge.side_lines(self.repo or { root = "" }, entry)
+  if merge.has_markers(lines, sides) then
     return 1
   end
   return unresolved > 0 and 1 or 0

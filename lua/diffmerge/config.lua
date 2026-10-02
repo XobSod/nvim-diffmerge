@@ -27,8 +27,8 @@ M.defaults = {
     max_count = nil, -- limit the number of commits (nil: everything, streamed)
   },
   diff = {
-    -- algorithm used by DiffMerge's own diffs (merge chunks, hunk staging).
-    -- The native diff windows use 'diffopt'.
+    -- algorithm used by DiffMerge's own diffs (hunk staging, finding regions again after
+    -- edits). Merges follow git (histogram); the native diff windows use 'diffopt'.
     algorithm = "histogram",
   },
   merge = {

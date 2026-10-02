@@ -11,7 +11,8 @@ dependencies, Neovim 0.12+.
 - **Changed characters** are highlighted in merges and in the three columns too (following
   `'diffopt'` `inline:`), where Vim's own colours would compare every window with every other.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.
-- **Merges, meld-style** — auto-merged result in the middle, conflicts show the base text;
+- **Merges, meld-style** — git's merge result in the middle (rerere and fixes by hand kept),
+  every conflict shows the base text;
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),
   undo just works; `<leader>1` / `<leader>3` in the file panel take a side for the whole file.
   Layouts: `mine | merged | other` (side by side or stacked) and `mine | base | other / merged`.

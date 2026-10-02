@@ -63,10 +63,11 @@ end
 ---@param loc string[]
 ---@param rem string[]
 ---@return diffmerge.Chunk[]
+---@param opts? { algorithm?: string, indent_heuristic?: boolean, d1?: table, d2?: table } d1 / d2: hunks (M.hunks) of base -> loc / rem
 function M.compute(base, loc, rem, opts)
   opts = opts or {}
-  local d1 = hunks(base, loc, opts.algorithm, opts.indent_heuristic)
-  local d2 = hunks(base, rem, opts.algorithm, opts.indent_heuristic)
+  local d1 = opts.d1 or hunks(base, loc, opts.algorithm, opts.indent_heuristic)
+  local d2 = opts.d2 or hunks(base, rem, opts.algorithm, opts.indent_heuristic)
   local chunks = {}
   local i, j = 1, 1
   local bpos, lpos, rpos = 0, 0, 0
@@ -166,17 +167,6 @@ function M.result(chunks, base, loc, rem)
     c.merged = { s, #out }
   end
   return out
-end
-
---- Number of conflicts.
-function M.count_conflicts(chunks)
-  local n = 0
-  for _, c in ipairs(chunks) do
-    if c.kind == "conflict" then
-      n = n + 1
-    end
-  end
-  return n
 end
 
 return M

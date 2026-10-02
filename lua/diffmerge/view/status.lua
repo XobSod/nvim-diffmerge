@@ -529,7 +529,7 @@ function StatusView:resolve(entries)
     end
     if ok then
       local content = util.read_file(abs)
-      if content and (content:find("\n<<<<<<< ", 1, true) or content:match("^<<<<<<< ")) and content:find("\n>>>>>>> ", 1, true) then
+      if content and merge.has_markers(util.split_lines(content), merge.side_lines(self.repo, e)) then
         ok = vim.fn.confirm(e.path .. " still contains conflict markers. Stage it anyway?", "&Yes\n&No", 2) == 1
       end
     end

@@ -53,6 +53,7 @@ end
 ---@field code integer
 ---@field stdout string
 ---@field stderr string
+---@field signal? integer the signal that ended git (a timeout ends it too)
 
 --- Runs git synchronously.
 ---@param repo diffmerge.Repo|string|nil repo or cwd
@@ -76,6 +77,7 @@ function M.run(repo, args, opts)
     code = res.code,
     stdout = res.stdout or "",
     stderr = res.stderr or "",
+    signal = res.signal,
   }
 end
 

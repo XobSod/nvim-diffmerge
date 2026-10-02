@@ -28,8 +28,8 @@ surprises from git's point of view.
 
 - Working tree files are the real buffers: edit and |:w| them.
 - The index is an editable buffer: |:w| writes it to the index.
-- Merges start meld-style ("auto-merge"): non-conflicting changes are applied,
-  conflicts show the BASE text (no conflict markers) until you resolve them.
+- Merges start from git's merge result: its conflict blocks show the BASE text
+  (no conflict markers) until you resolve them.
 
 Requires Neovim 0.12+ and git 2.23+. Mini.icons (files and folders) or 
 nvim-web-devicons (files) are used for icons when available.
@@ -234,8 +234,19 @@ Selecting the pseudo rows too compares against the working tree / index.
 MERGE                                                         *diffmerge-merge*
 
 Conflicted files open in a merge layout (default: mine | merged | other).
-The merged buffer starts with the auto-merge result: changes of one side, or
-identical changes of both, are applied; conflicts contain the BASE text.
+A file with git's conflict markers keeps git's merge: everything outside the
+blocks stays as it is (git's own merge, rerere resolutions, fixes made by
+hand), and every block is an unresolved conflict showing its BASE text. The
+conflicts are git's blocks, also where git joined nearby conflicts into one
+block or split one into two; any marker style (merge, diff3, zdiff3) and size
+(gitattributes `conflict-marker-size`). A block changed by hand (inside its
+markers or right next to them) stays as it is, markers included, unresolved
+until you pick a side or remove the markers. Blocks that LOCAL, BASE or REMOTE
+have as text (a file showing conflict markers) are text. Without markers (a
+file resolved by hand or by rerere, or saved half-resolved), git's merge of
+the three versions (`git merge-file`, in the repository's merge.conflictStyle)
+gives the conflicts; changes of one side, or identical changes of both, are
+applied as git applied them.
 
 Native diff colours are muted in merge windows (Vim compares every window
 with every other), and 'diffopt' "linematch" is suspended while a merge is on
@@ -262,11 +273,17 @@ Resolving, in any window of the merge layout, for the chunk under the cursor:
   ]c / [c     next / previous change
 
 The state of a chunk is derived from its content, so undo and manual edits
-just work. Lines typed at the very edge of a chunk (e.g. `o` on the line above
-it) stay outside of it, so an unresolved conflict never becomes "resolved" by
-accident. Modify/delete conflicts stay unresolved until you pick a side; an
-emptied file is offered for deletion (`git rm`) when you mark it resolved. Saving writes what you see (never conflict markers). Re-opening a
-file that was saved half-resolved finds the unresolved conflicts again.
+just work. Undo stops where the merge started: git's markers do not come back
+(redo still works). Lines typed at the very edge of a chunk (e.g. `o` on the
+line above it) stay outside of it, so an unresolved conflict never becomes
+"resolved" by accident. Modify/delete conflicts stay unresolved until you pick
+a side; an emptied file is offered for deletion (`git rm`) when you mark it
+resolved. Saving writes what you see. Re-opening a file that was saved
+half-resolved finds the unresolved conflicts again (they still show their BASE
+text); in a new Neovim session they are found in git's merge in the
+repository's merge.conflictStyle, so a file whose markers came in another
+style (`git checkout --conflict=diff3`) may then show its conflicts joined
+differently.
 
 During a rebase "ours" is the branch being rebased onto and "theirs" is your
 commit; the window bars say so.

@@ -51,7 +51,7 @@ local function open_conflict(dir)
 end
 
 H.describe("merge in the status view", function()
-  H.it("opens conflicts in the merge layout with the auto-merge result", function()
+  H.it("opens conflicts in the merge layout with git's merge result", function()
     local dir, base = conflict_repo()
     local view, buf = open_conflict(dir)
     H.eq(H.entries(view), { "conflicts:U:f.txt" })

@@ -9,6 +9,8 @@ local config = require("diffmerge.config")
 local diff3 = require("diffmerge.diff3")
 local hunks = require("diffmerge.hunks")
 local inline = require("diffmerge.inline")
+local git = require("diffmerge.git")
+local markers = require("diffmerge.markers")
 local source = require("diffmerge.source")
 local util = require("diffmerge.util")
 
@@ -88,34 +90,25 @@ local function contains(list, v)
   return false
 end
 
---- Git conflict markers present (the file is in git's conflicted state)?
-function M.has_markers(lines)
-  local open, sep, close = false, false, false
-  for _, l in ipairs(lines) do
-    if l:sub(1, 8) == "<<<<<<< " or l == "<<<<<<<" then
-      open = true
-    elseif l == "=======" then
-      sep = true
-    elseif l:sub(1, 8) == ">>>>>>> " or l == ">>>>>>>" then
-      close = true
-    end
-  end
-  return open and sep and close
-end
-
---- Maps region ranges of `result` onto `current` (the result after edits).
---- Lines inserted exactly at a region's edge are ambiguous (inside or outside?); such
---- regions get `alts`: the ranges including them, to be tried first (see pick_range).
----@param ranges integer[][] 0-based end-exclusive ranges in result
----@return { [1]: integer, [2]: integer, touched: boolean, alts: integer[][] }[]
-function M.locate(ranges, result, current)
-  local d = hunks.compute(result, current)
+--- hunks.compute's hunks as 0-based ranges { as, ae, bs, be }.
+local function zero_based(d)
   local hs = {}
   for _, h in ipairs(d) do
     local as = h.ac == 0 and h.as or h.as - 1
     local bs = h.bc == 0 and h.bs or h.bs - 1
     hs[#hs + 1] = { as = as, ae = as + h.ac, bs = bs, be = bs + h.bc }
   end
+  return hs
+end
+
+--- Maps region ranges of `result` onto `current` (the result after edits).
+--- Lines inserted exactly at a region's edge are ambiguous (inside or outside?); such
+--- regions get `alts`: the ranges including them, to be tried first (see pick_range).
+---@param ranges integer[][] 0-based end-exclusive ranges in result
+---@param hs? table hunks of result -> current (zero_based; default: computed)
+---@return { [1]: integer, [2]: integer, touched: boolean, alts: integer[][] }[]
+function M.locate(ranges, result, current, hs)
+  hs = hs or zero_based(hunks.compute(result, current))
   local out = {}
   local prev_e = 0
   for idx, r in ipairs(ranges) do
@@ -201,24 +194,22 @@ function M.pick_range(loc, current, matches)
   return loc[1], loc[2]
 end
 
---- Every content a chunk can have without manual edits (base text and all pick orders).
-function M.renderings(chunk, lines)
-  local function slice(name)
-    return diff3.slice(lines[name], chunk[name])
-  end
-  local out = { slice("base") }
+--- Every content a region can have without manual edits (base text and all pick orders).
+---@param texts { local: string[], base: string[], remote: string[] }
+function M.renderings(texts)
+  local out = { texts.base }
   for _, cand in ipairs(CANDIDATES) do
     local r = {}
     for _, p in ipairs(cand) do
-      util.extend(r, slice(SRC[p]))
+      util.extend(r, texts[SRC[p]])
     end
     out[#out + 1] = r
   end
   return out
 end
 
-local function matcher(chunk, lines)
-  local renders = M.renderings(chunk, lines)
+local function matcher(texts)
+  local renders = M.renderings(texts)
   return function(content)
     for _, r in ipairs(renders) do
       if util.lines_equal(content, r) then
@@ -229,15 +220,438 @@ local function matcher(chunk, lines)
   end
 end
 
+local function overlaps(a, b)
+  if a[1] == a[2] and b[1] == b[2] then
+    return a[1] == b[1]
+  elseif a[1] == a[2] then
+    return a[1] >= b[1] and a[1] <= b[2]
+  elseif b[1] == b[2] then
+    return b[1] >= a[1] and b[1] <= a[2]
+  end
+  return a[1] < b[2] and a[2] > b[1]
+end
+
+local function by_start(a, b)
+  return a.range[1] < b.range[1] or (a.range[1] == b.range[1] and a.range[2] < b.range[2])
+end
+
+-- base -> side hunks the way git's merge computes them (histogram, no indent heuristic), per
+-- pair of line lists
+local git_hunks_memo = setmetatable({}, { __mode = "k" })
+local function git_hunks(base, side)
+  local by_side = git_hunks_memo[base]
+  if not by_side then
+    by_side = setmetatable({}, { __mode = "k" })
+    git_hunks_memo[base] = by_side
+  end
+  by_side[side] = by_side[side] or diff3.hunks(base, side, "histogram", false)
+  return by_side[side]
+end
+
+--- git's own merge of the three versions (`git merge-file`, in the repository's
+--- merge.conflictStyle, with the histogram diff of `git merge`): its parts as markers.parse
+--- gives them, nil when git cannot run.
+---@param cwd? string where git runs (its config decides the conflict style)
+function M.git_merge(lines, cwd)
+  local files = {}
+  for k, name in ipairs(SRC) do
+    files[k] = vim.fn.tempname()
+    local f = io.open(files[k], "wb")
+    if not f then
+      return nil
+    end
+    -- every line starting with a letter: merge-file then joins conflicts like `git merge` does
+    -- (it also joins those separated only by lines without letters or digits), and no line
+    -- of the files is taken for a marker
+    local t = lines[name]
+    f:write(#t > 0 and ("x" .. table.concat(t, "\nx") .. "\n") or "")
+    f:close()
+  end
+  local args = { "merge-file", "-p", "--diff-algorithm=histogram" }
+  vim.list_extend(args, { "-L", "ours", "-L", "base", "-L", "theirs", files[1], files[2], files[3] })
+  local res = git.run(cwd, args)
+  if res.code == 129 then
+    -- a git without --diff-algorithm for merge-file
+    table.remove(args, 3)
+    res = git.run(cwd, args)
+  end
+  for _, f in ipairs(files) do
+    os.remove(f)
+  end
+  -- the exit code is the number of conflicts (at most 127)
+  if (res.signal and res.signal ~= 0) or res.code < 0 or res.code > 127 then
+    return nil
+  end
+  local parts = markers.parse((util.split_lines(res.stdout)))
+  for _, part in ipairs(parts) do
+    for _, key in ipairs({ "text", "ours", "base", "theirs" }) do
+      for i, l in ipairs(part[key] or {}) do
+        part[key][i] = l:sub(2)
+      end
+    end
+    part.lines = nil
+  end
+  return parts
+end
+
+--- Where `text` is in `lines`: at `range` when no change of the diff (projection -> side)
+--- touches the block, else the place nearest to `range` among the lines those changes cover.
+--- nil when it is not there.
+---@param window integer[] those lines (with `range`), `.touched`: whether there are changes
+local function exact(lines, range, text, from, window)
+  local function at(p)
+    for i = 1, #text do
+      if lines[p + i] ~= text[i] then
+        return false
+      end
+    end
+    return true
+  end
+  local s = math.max(range[1], from)
+  if not window.touched then
+    return at(s) and { s, s + #text } or nil
+  end
+  if #text == 0 then
+    return { s, s }
+  end
+  local best
+  for p = math.max(window[1], from), window[2] - #text do
+    if at(p) and (not best or math.abs(p - range[1]) < math.abs(best - range[1])) then
+      best = p
+    end
+  end
+  return best and { best, best + #text }
+end
+
+-- the projections differ from the sides by the other side's changes: any diff finds those
+local NEAR = { algorithm = "myers", indent_heuristic = false }
+
+--- The conflict blocks of a merged file (parts from markers.parse) in LOCAL, BASE and REMOTE:
+--- where their sides are and the texts there. A block without a BASE section (git's default
+--- "merge" style) gets the BASE lines its sides replace, each of them in the first block that
+--- replaces it. `edited`: the block's sides are not what LOCAL / BASE / REMOTE have (changed by
+--- hand).
+---@return { texts: table, side: table, edited: boolean }[] one per block
+function M.block_sides(parts, lines)
+  local field = { ["local"] = "ours", base = "base", remote = "theirs" }
+  local blocks = {}
+  -- the file with every block as one of its sides
+  local proj, ranges = {}, {}
+  for _, role in ipairs(SRC) do
+    proj[role], ranges[role] = {}, {}
+  end
+  for _, part in ipairs(parts) do
+    if not part.text then
+      blocks[#blocks + 1] = part
+    end
+    for _, role in ipairs(SRC) do
+      if part.text then
+        util.extend(proj[role], part.text)
+      else
+        local first = #proj[role]
+        util.extend(proj[role], part[field[role]] or {})
+        ranges[role][#ranges[role] + 1] = { first, #proj[role] }
+      end
+    end
+  end
+  -- strict: git's text next to a block is what LOCAL and REMOTE have there, so a change of the
+  -- diff touching the block is a change by hand (BASE: zdiff3 moves changes of both sides
+  -- out of a block, next to it)
+  local function find(role, strict)
+    local list = lines[role]
+    local hs = zero_based(hunks.compute(proj[role], list, NEAR))
+    local loc = M.locate(ranges[role], proj[role], list, hs)
+    local found, from, j = {}, 0, 1
+    for k, part in ipairs(blocks) do
+      local text, pr = part[field[role]], ranges[role][k]
+      local window = { loc[k][1], loc[k][2] }
+      while hs[j] and hs[j].ae < pr[1] do
+        j = j + 1
+      end
+      local i = j
+      while hs[i] and hs[i].as <= pr[2] do
+        window[1], window[2] = math.min(window[1], hs[i].bs), math.max(window[2], hs[i].be)
+        window.touched = true
+        i = i + 1
+      end
+      local r = text and not (strict and window.touched) and exact(list, loc[k], text, from, window) or nil
+      found[k] = { range = r or { loc[k][1], loc[k][2] }, exact = r ~= nil }
+      from = math.max(from, found[k].range[2])
+    end
+    return found
+  end
+  local B = lines.base
+  local in_l, in_r = find("local", true), find("remote", true)
+  local in_b = vim.iter(blocks):any(function(b)
+    return b.base ~= nil
+  end) and find("base")
+  -- what a side's lines replace in BASE
+  local function via(found, side)
+    local hs = {}
+    for _, h in ipairs(git_hunks(B, side)) do
+      hs[#hs + 1] = { as = h.os, ae = h.oe, bs = h.bs, be = h.be }
+    end
+    local rs = {}
+    for k, f in ipairs(found) do
+      rs[k] = f.range
+    end
+    return M.locate(rs, side, B, hs)
+  end
+  local via_l, via_r = via(in_l, lines["local"]), via(in_r, lines.remote)
+  local out, prev = {}, 0
+  for k, part in ipairs(blocks) do
+    local b
+    if part.base then
+      b = in_b[k].range
+    else
+      local s = math.max(math.min(via_l[k][1], via_r[k][1]), prev)
+      b = { s, math.max(via_l[k][2], via_r[k][2], s) }
+    end
+    prev = math.max(prev, b[2])
+    local side = { ["local"] = in_l[k].range, base = b, remote = in_r[k].range }
+    local texts = {}
+    for _, role in ipairs(SRC) do
+      texts[role] = util.slice(lines[role], side[role][1] + 1, side[role][2])
+    end
+    out[k] = {
+      texts = texts,
+      side = side,
+      edited = not (in_l[k].exact and in_r[k].exact and (not part.base or in_b[k].exact)),
+    }
+  end
+  return out
+end
+
+--- Parts of a merged file (markers.parse) as lines with every block replaced by its BASE text,
+--- and the blocks as conflicts. A block changed by hand stays as it is (with its markers).
+local function flatten(parts, lines)
+  local sides = M.block_sides(parts, lines)
+  local out, blocks = {}, {}
+  for _, part in ipairs(parts) do
+    if part.text then
+      util.extend(out, part.text)
+    else
+      local b = sides[#blocks + 1]
+      local first = #out
+      util.extend(out, b.edited and part.lines or b.texts.base)
+      blocks[#blocks + 1] = { range = { first, #out }, kind = "conflict", texts = b.texts, side = b.side }
+    end
+  end
+  return out, blocks
+end
+
+--- `block` is a run of lines of `list`.
+local function occurs(list, block)
+  for p = 0, #list - #block do
+    if list[p + 1] == block[1] then
+      local k = 2
+      while k <= #block and list[p + k] == block[k] do
+        k = k + 1
+      end
+      if k > #block then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+--- Blocks that LOCAL, BASE or REMOTE have as text, markers and all, are text (a file showing
+--- conflict markers, e.g. documentation).
+local function drop_literal(parts, lines)
+  for i, part in ipairs(parts) do
+    if part.lines then
+      for _, role in ipairs(SRC) do
+        if occurs(lines[role], part.lines) then
+          parts[i] = { text = part.lines }
+          break
+        end
+      end
+    end
+  end
+  return parts
+end
+
+--- Git conflict markers present (the file is in git's conflicted state)? With the three
+--- versions: blocks they have as text do not count.
+---@param sides? table<string, string[]> local / base / remote
+function M.has_markers(lines, sides)
+  local parts = markers.parse(lines)
+  if sides then
+    parts = drop_literal(parts, sides)
+  end
+  for _, part in ipairs(parts) do
+    if part.ours then
+      return true
+    end
+  end
+  return false
+end
+
+--- A file with git's conflict markers in the form of the model: every block replaced by its
+--- BASE text.
+---@return string[] lines, { range: integer[], kind: string, texts: table, side: table }[] blocks
+function M.from_git_markers(current, lines)
+  return flatten(drop_literal(markers.parse(current), lines), lines)
+end
+
+--- The regions of a merge and the text they are located in.
+---
+--- reference: git's merge with every conflict block showing its BASE text. Its blocks are the
+--- conflicts; DiffMerge's one-sided and identical changes where git merged the same way are
+--- regions too (signs, picks). Without git: DiffMerge's own merge.
+---@param lines table<string, string[]> local / base / remote
+---@param cwd? string where git runs
+---@return string[] reference, { range: integer[], kind: string, texts: table, side: table }[] regions, table? parts git's merge (markers.parse)
+function M.model(lines, cwd)
+  local L, B, R = lines["local"], lines.base, lines.remote
+  local chunks = diff3.compute(B, L, R, { d1 = git_hunks(B, L), d2 = git_hunks(B, R) })
+  local result = diff3.result(chunks, B, L, R)
+  local list, ranges = {}, {}
+  for _, c in ipairs(chunks) do
+    if c.kind ~= "equal" then
+      list[#list + 1] = c
+      ranges[#ranges + 1] = c.merged
+    end
+  end
+  local function chunk_region(c, range)
+    return {
+      range = { range[1], range[2] },
+      kind = c.kind,
+      texts = {
+        ["local"] = diff3.slice(L, c["local"]),
+        base = diff3.slice(B, c.base),
+        remote = diff3.slice(R, c.remote),
+      },
+      side = { ["local"] = c["local"], base = c.base, remote = c.remote },
+    }
+  end
+  local parts = M.git_merge(lines, cwd)
+  if not parts then
+    local regions = {}
+    for _, c in ipairs(list) do
+      regions[#regions + 1] = chunk_region(c, c.merged)
+    end
+    return result, regions
+  end
+  local reference, conflicts = flatten(parts, lines)
+  local regions = vim.list_slice(conflicts)
+  local located = M.locate(ranges, result, reference)
+  for k, c in ipairs(list) do
+    local at = { located[k][1], located[k][2] }
+    local inside = vim.iter(conflicts):any(function(b)
+      return overlaps(b.range, at)
+    end)
+    if c.kind ~= "conflict" and not inside and not located[k].touched then
+      regions[#regions + 1] = chunk_region(c, at)
+    end
+  end
+  table.sort(regions, by_start)
+  return reference, regions, parts
+end
+
+--- Regions of the model found in `current` (the merged file as it is now). The blocks of git's
+--- markers (from_git_markers) are the conflicts where they are.
+---@param blocks? table[]
+---@return { range: integer[], kind: string, texts: table, side: table }[]
+function M.place(reference, regions, current, blocks)
+  blocks = blocks or {}
+  local ranges = {}
+  for k, r in ipairs(regions) do
+    ranges[k] = r.range
+  end
+  local located = not util.lines_equal(current, reference) and M.locate(ranges, reference, current)
+  local out = vim.list_slice(blocks)
+  for k, r in ipairs(regions) do
+    local s, e = r.range[1], r.range[2]
+    if located then
+      s, e = M.pick_range(located[k], current, matcher(r.texts))
+    end
+    local at = { s, e }
+    local covered = vim.iter(blocks):any(function(b)
+      return overlaps(b.range, at)
+    end)
+    if not covered then
+      out[#out + 1] = { range = at, kind = r.kind, texts = r.texts, side = r.side }
+    end
+  end
+  table.sort(out, by_start)
+  return out
+end
+
+-- DiffMerge's conversion of a merged buffer with git's markers: the buffer before and after
+-- (and the undo state after), the regions placed then and the sides they come from
+local converted = {}
+
+local function conversion(buf, lines)
+  local c = buf and converted[buf]
+  if not c or not api.nvim_buf_is_valid(buf) then
+    return nil
+  end
+  for _, role in ipairs(SRC) do
+    if not util.lines_equal(c.sides[role], lines[role]) then
+      return nil
+    end
+  end
+  return c
+end
+
+local function remember(buf, c)
+  converted[buf] = c
+  api.nvim_create_autocmd("BufReadPost", {
+    buffer = buf,
+    callback = function()
+      if converted[buf] ~= c then
+        return true
+      end
+      if M.has_markers(util.buf_lines(buf), c.sides) then
+        -- git's conflicted file again
+        converted[buf] = nil
+        return true
+      end
+      -- the merge as saved: its conflicts are still these, the undo history is another
+      c.seq = nil
+    end,
+  })
+end
+
+--- The merged file as the merge starts from it, and its regions there. A file with git's
+--- markers is converted (if `convert`): its blocks replaced by their BASE text. A buffer
+--- DiffMerge converted keeps the conflicts of then; otherwise they are git's merge of the
+--- three versions.
+---@param buf? integer the loaded buffer of the merged file
+---@return string[] lines, table[] regions, boolean converted
+function M.start(buf, current, lines, cwd, convert)
+  local c = conversion(buf, lines)
+  if c and not util.lines_equal(current, c.before) then
+    return current, M.place(c.lines, c.regions, current), false
+  end
+  local reference, regions, parts = M.model(lines, cwd)
+  local blocks_in = parts and vim.iter(parts):any(function(p)
+    return p.ours ~= nil
+  end)
+  if convert and blocks_in and markers.matches(current, parts) then
+    -- git's merge as git wrote it (whatever its sides contain)
+    return reference, M.place(reference, regions, reference), true
+  end
+  if not convert or not M.has_markers(current, lines) then
+    return current, M.place(reference, regions, current), false
+  end
+  local out, blocks = M.from_git_markers(current, lines)
+  return out, M.place(reference, regions, out, blocks), true
+end
+
 ---------------------------------------------------------------------------
 -- Controller
 ---------------------------------------------------------------------------
 
 ---@class diffmerge.Region
----@field chunk diffmerge.Chunk
----@field kind string
+---@field kind "local"|"remote"|"both"|"conflict"
+---@field texts { local: string[], base: string[], remote: string[] }
+---@field side table<string, integer[]> its lines in the LOCAL / BASE / REMOTE windows (0-based, end exclusive)
 ---@field picks? integer[]
 ---@field edited boolean
+---@field sticky? string[] content that stays unresolved (modify/delete)
 ---@field id integer extmark id in the merged buffer
 
 local Controller = {}
@@ -299,52 +713,55 @@ function M.attach(view, entry, infos)
     base = lines_for("base"),
     remote = lines_for("remote"),
   }
-  self.chunks = diff3.compute(self.lines.base, self.lines["local"], self.lines.remote)
-  local result = diff3.result(self.chunks, self.lines.base, self.lines["local"], self.lines.remote)
-  local list, ranges = {}, {}
-  for _, c in ipairs(self.chunks) do
-    if c.kind ~= "equal" then
-      list[#list + 1] = c
-      ranges[#ranges + 1] = { c.merged[1], c.merged[2] }
-    end
-  end
-  local current = api.nvim_buf_get_lines(self.buf, 0, -1, false)
-  if #current == 1 and current[1] == "" then
-    current = {}
-  end
   -- modify/delete conflicts: the file holds git's pick of the surviving side; that is not a
   -- decision of the user, so the conflict stays unresolved until it is touched
   local L, R = entry.sides["local"], entry.sides.remote
   local modify_delete = (L and L.kind == "empty") ~= (R and R.kind == "empty")
-  local located
-  if M.has_markers(current) then
-    -- fresh conflict: start from the auto-merge result (one undo step)
-    if vim.bo[self.buf].modifiable then
-      api.nvim_buf_set_lines(self.buf, 0, -1, false, result)
-      written[self.buf] = result
-    end
-  elseif not util.lines_equal(current, result) then
-    located = M.locate(ranges, result, current)
+  local before = util.buf_lines(self.buf, infos.merged)
+  local c = conversion(self.buf, self.lines)
+  if c and c.seq and vim.fn.undotree(self.buf).seq_cur < c.seq and util.lines_equal(before, c.before) then
+    -- undone to git's markers while the merge was not shown: forward to its start (redo stays)
+    api.nvim_buf_call(self.buf, function()
+      pcall(vim.cmd, "silent undo " .. c.seq)
+    end)
+    before = util.buf_lines(self.buf, infos.merged)
   end
-  for k, c in ipairs(list) do
-    local s_, e_ = ranges[k][1], ranges[k][2]
-    if located then
-      s_, e_ = M.pick_range(located[k], current, matcher(c, self.lines))
-    end
+  local cwd = view.repo and view.repo.root ~= "" and view.repo.root or nil
+  local current, placed, changed = M.start(self.buf, before, self.lines, cwd, vim.bo[self.buf].modifiable)
+  if changed then
+    -- git's conflicted file: its merge stays, every block starts with its BASE text (one
+    -- undo step)
+    local had_edits = vim.bo[self.buf].modified
+    api.nvim_buf_set_lines(self.buf, 0, -1, false, current)
+    written[self.buf] = not had_edits and current or nil
+    remember(self.buf, {
+      before = before,
+      seq = vim.fn.undotree(self.buf).seq_cur,
+      lines = current,
+      regions = placed,
+      sides = self.lines,
+    })
+  end
+  for _, p in ipairs(placed) do
     local region = {
-      chunk = c,
-      kind = c.kind,
-      picks = initial_picks(c.kind),
+      kind = p.kind,
+      texts = p.texts,
+      side = p.side,
+      picks = initial_picks(p.kind),
       edited = false,
-      index = k,
     }
-    self:set_mark(region, s_, e_)
-    if modify_delete and c.kind == "conflict" then
-      region.sticky = api.nvim_buf_get_lines(self.buf, s_, e_, false)
+    self:set_mark(region, p.range[1], p.range[2])
+    if modify_delete and p.kind == "conflict" then
+      region.sticky = api.nvim_buf_get_lines(self.buf, p.range[1], p.range[2], false)
     end
     self.regions[#self.regions + 1] = region
   end
-  self.conflicts = diff3.count_conflicts(self.chunks)
+  self.conflicts = 0
+  for _, r in ipairs(self.regions) do
+    if r.kind == "conflict" then
+      self.conflicts = self.conflicts + 1
+    end
+  end
   self:sync()
   M.suspend_linematch()
   api.nvim_buf_attach(self.buf, false, {
@@ -364,6 +781,19 @@ function M.attach(view, entry, infos)
   util.scope_ns(ns_hl, view, view.layout:diff_wins())
   -- the key hint follows the conflict under the cursor
   self.augroup = api.nvim_create_augroup("DiffMergeMerge" .. self.buf, { clear = true })
+  -- the file read again (:e!, changed on disk): the regions start over
+  api.nvim_create_autocmd("BufReadPost", {
+    group = self.augroup,
+    buffer = self.buf,
+    callback = function()
+      self.stale = true
+      vim.schedule(function()
+        if not self.detached then
+          self.view:show_entry(self.entry, { force = true })
+        end
+      end)
+    end,
+  })
   local bufs = { self.buf }
   for _, role in ipairs(SRC) do
     if infos[role] then
@@ -455,6 +885,18 @@ function Controller:set_mark(r, s, e)
 end
 
 function Controller:detach()
+  local c = converted[self.buf]
+  -- (stale: the text was replaced as a whole, the marks no longer follow it)
+  local current = c and not self.detached and not self.stale and api.nvim_buf_is_loaded(self.buf)
+  if current and conversion(self.buf, self.lines) then
+    -- the conversion as it is now: placing it again needs no guessing
+    local regions = {}
+    for _, r in ipairs(self.regions) do
+      local s, e = self:range(r)
+      regions[#regions + 1] = { range = { s, e }, kind = r.kind, texts = r.texts, side = r.side }
+    end
+    c.lines, c.regions = util.buf_lines(self.buf), regions
+  end
   self.detached = true
   M.restore_linematch()
   util.scope_ns(ns_hl, self.view, nil)
@@ -478,6 +920,8 @@ function Controller:range(r)
     return 0, 0
   end
   local s, e = m[1], m[3].end_row or m[1]
+  local count = api.nvim_buf_line_count(self.buf)
+  s, e = math.min(s, count), math.min(e, count)
   if s > e then
     -- the whole region was replaced (paste, :s): the new text is the region
     s, e = e, s
@@ -490,18 +934,38 @@ end
 
 function Controller:render_picks(r, picks)
   if picks == nil then
-    return diff3.slice(self.lines.base, r.chunk.base)
+    return r.texts.base
   end
   local out = {}
   for _, p in ipairs(picks) do
-    local name = SRC[p]
-    util.extend(out, diff3.slice(self.lines[name], r.chunk[name]))
+    util.extend(out, r.texts[SRC[p]])
   end
   return out
 end
 
 --- Re-derives the state of every region from the buffer content.
 function Controller:sync()
+  local c = converted[self.buf]
+  if
+    c
+    and not self.rewinding
+    and api.nvim_buf_line_count(self.buf) == math.max(#c.before, 1)
+    and util.lines_equal(util.buf_lines(self.buf), c.before)
+  then
+    -- undone to git's markers: forward to the start of the merge again (redo stays)
+    self.rewinding, self.stale = true, true
+    vim.schedule(function()
+      if self.detached then
+        return
+      end
+      api.nvim_buf_call(self.buf, function()
+        pcall(vim.cmd, "silent undo " .. c.seq)
+      end)
+      util.info("the merge starts here: git's conflict markers are not brought back")
+      self.view:show_entry(self.entry, { force = true })
+    end)
+    return
+  end
   for _, r in ipairs(self.regions) do
     local s, e = self:range(r)
     local content = api.nvim_buf_get_lines(self.buf, s, e, false)
@@ -526,6 +990,10 @@ function Controller:sync()
         end
       end
       r.edited = not found
+      if r.edited and r.kind == "conflict" and M.has_markers(content, self.lines) then
+        -- git's markers in it: still open
+        r.picks, r.edited = nil, false
+      end
     end
   end
 end
@@ -583,7 +1051,7 @@ function Controller:style(r)
   if not same_picks(r.picks, initial_picks(r.kind)) then
     return { hl = "DiffMergeResolved", sign = picks_text(r.picks), sign_hl = "DiffMergeResolvedSign" }
   end
-  local hl = (r.chunk.base[1] == r.chunk.base[2]) and "DiffMergeAdd" or "DiffMergeChange"
+  local hl = #r.texts.base == 0 and "DiffMergeAdd" or "DiffMergeChange"
   if r.kind == "local" then
     return { hl = hl, sign = "L", sign_hl = "DiffMergeLocalSign" }
   elseif r.kind == "remote" then
@@ -666,7 +1134,7 @@ function Controller:render()
     if e > s and not self:is_unresolved(r) then
       -- what the merge changed against BASE
       local content = api.nvim_buf_get_lines(buf, s, e, false)
-      self:paint_inline(buf, s, content, diff3.slice(self.lines.base, r.chunk.base), TEXT[style.hl])
+      self:paint_inline(buf, s, content, r.texts.base, TEXT[style.hl])
     end
     local row = s
     if s == e and s > 0 then
@@ -677,13 +1145,13 @@ function Controller:render()
 
     for _, role in ipairs(SRC) do
       local info = self.infos[role]
+      local rr = r.side[role]
       if info and relevant[role][r.kind] and api.nvim_buf_is_valid(info.buf) then
-        local rr = r.chunk[role]
         local hl
         if r.kind == "conflict" then
           hl = style.hl
         else
-          hl = (r.chunk.base[1] == r.chunk.base[2]) and "DiffMergeAdd" or "DiffMergeChange"
+          hl = #r.texts.base == 0 and "DiffMergeAdd" or "DiffMergeChange"
         end
         if rr[2] > rr[1] then
           pcall(api.nvim_buf_set_extmark, info.buf, ns_hl, rr[1], 0, {
@@ -706,13 +1174,7 @@ function Controller:render()
           else
             ref = "base"
           end
-          self:paint_inline(
-            info.buf,
-            rr[1],
-            diff3.slice(self.lines[role], rr),
-            diff3.slice(self.lines[ref], r.chunk[ref]),
-            TEXT[hl]
-          )
+          self:paint_inline(info.buf, rr[1], r.texts[role], r.texts[ref], TEXT[hl])
         end
         if rr[2] > rr[1] and r.picks and contains(r.picks, SRC_INDEX[role]) and not r.edited then
           pcall(api.nvim_buf_set_extmark, info.buf, ns_hl, rr[1], 0, {
@@ -739,7 +1201,7 @@ function Controller:region_at(win)
     if role == "merged" then
       s, e = self:range(r)
     else
-      s, e = r.chunk[role][1], r.chunk[role][2]
+      s, e = r.side[role][1], r.side[role][2]
     end
     if s < e then
       if lnum >= s and lnum < e then
@@ -822,7 +1284,7 @@ function Controller:start_in(r, role)
   if role == "merged" then
     return (self:range(r))
   end
-  return r.chunk[role][1]
+  return r.side[role][1]
 end
 
 function Controller:jump(ctx, dir, conflicts_only)
@@ -836,6 +1298,12 @@ function Controller:jump(ctx, dir, conflicts_only)
   for _, r in ipairs(self.regions) do
     if not conflicts_only or r.kind == "conflict" then
       starts[#starts + 1] = self:start_in(r, role)
+    end
+  end
+  table.sort(starts)
+  for i = #starts, 2, -1 do
+    if starts[i] == starts[i - 1] then
+      table.remove(starts, i)
     end
   end
   if #starts == 0 then
@@ -898,55 +1366,47 @@ end
 
 --- Number of conflicts of a merge entry that are still unresolved in the merged file
 --- (loaded buffer content if any, else the file on disk).
-function M.count_unresolved(repo, entry)
-  local function read(src)
-    if not src or src.kind == "empty" then
-      return {}
-    end
-    return source.read_lines(repo, src) or {}
+local function read(repo, src)
+  if not src or src.kind == "empty" then
+    return {}
   end
-  local lines = {
-    ["local"] = read(entry.sides["local"]),
-    base = read(entry.sides.base),
-    remote = read(entry.sides.remote),
+  return source.read_lines(repo, src) or {}
+end
+
+--- LOCAL / BASE / REMOTE of a merge entry.
+function M.side_lines(repo, entry)
+  return {
+    ["local"] = read(repo, entry.sides["local"]),
+    base = read(repo, entry.sides.base),
+    remote = read(repo, entry.sides.remote),
   }
+end
+
+function M.count_unresolved(repo, entry)
+  local lines = M.side_lines(repo, entry)
   local merged = entry.sides.merged
-  local current = {}
+  local current, buf = {}, nil
   if merged and merged.kind ~= "empty" then
     local abs = merged.kind == "worktree" and vim.fs.joinpath(repo.root, merged.path) or merged.abspath
-    local buf = util.find_buf(abs)
+    buf = util.find_buf(abs)
     if buf and api.nvim_buf_is_loaded(buf) then
-      current = api.nvim_buf_get_lines(buf, 0, -1, false)
-      if #current == 1 and current[1] == "" then
-        current = {}
-      end
+      current = util.buf_lines(buf)
     else
-      current = read(merged)
+      buf = nil
+      current = read(repo, merged)
     end
   end
-  local chunks = diff3.compute(lines.base, lines["local"], lines.remote)
-  local result = diff3.result(chunks, lines.base, lines["local"], lines.remote)
-  local conflicts = diff3.count_conflicts(chunks)
   local L, R = entry.sides["local"], entry.sides.remote
-  if (L and L.kind == "empty") ~= (R and R.kind == "empty") then
-    return conflicts -- modify/delete: only an explicit decision resolves it
-  end
-  if M.has_markers(current) or util.lines_equal(current, result) then
-    return conflicts
-  end
-  local list, ranges = {}, {}
-  for _, c in ipairs(chunks) do
-    if c.kind ~= "equal" then
-      list[#list + 1] = c
-      ranges[#ranges + 1] = c.merged
-    end
-  end
-  local located = M.locate(ranges, result, current)
+  -- modify/delete: only an explicit decision resolves it
+  local modify_delete = (L and L.kind == "empty") ~= (R and R.kind == "empty")
+  local placed
+  current, placed = M.start(buf, current, lines, repo.root ~= "" and repo.root or nil, true)
   local n = 0
-  for k, c in ipairs(list) do
-    if c.kind == "conflict" then
-      local s, e = M.pick_range(located[k], current, matcher(c, lines))
-      if util.lines_equal(util.slice(current, s + 1, e), diff3.slice(lines.base, c.base)) then
+  for _, p in ipairs(placed) do
+    if p.kind == "conflict" then
+      local content = util.slice(current, p.range[1] + 1, p.range[2])
+      local open = modify_delete or util.lines_equal(content, p.texts.base)
+      if open or (not matcher(p.texts)(content) and M.has_markers(content, lines)) then
         n = n + 1
       end
     end

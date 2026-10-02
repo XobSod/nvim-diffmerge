@@ -128,6 +128,31 @@ H.describe("merge regions", function()
     H.eq(H.buf_lines(buf), { "a", "b", "FEAT", "MAIN" })
   end)
 
+  H.it("the cursor line shows in its number only where DiffMerge paints the lines", function()
+    local saved = vim.go.cursorlineopt
+    local ok, err = pcall(function()
+      vim.go.cursorlineopt = "both"
+      local dir, view = conflict({ "a", "b", "c" }, { "a", "FEAT", "c" }, { "a", "MAIN", "c" })
+      for role, win in pairs(view.layout.wins) do
+        H.eq(vim.wo[win].cursorlineopt, "number", role)
+      end
+      -- what other windows get stays as it was
+      H.eq({ vim.go.cursorlineopt, vim.go.winhighlight, vim.go.winbar }, { "both", "", "" })
+      H.write(dir, "other.txt", { "changed" })
+      view:refresh()
+      H.flush(100)
+      view:show_entry(H.find_entry(view, "unstaged", "other.txt"))
+      for role, win in pairs(view.layout.wins) do
+        H.eq(vim.wo[win].cursorlineopt, "both", "plain diff: " .. role)
+      end
+      view:close()
+      vim.cmd.edit(dir .. "/f.txt")
+      H.eq(vim.wo.cursorlineopt, "both", "the merged file in another window")
+    end)
+    vim.go.cursorlineopt = saved
+    assert(ok, err)
+  end)
+
   H.it("suspends linematch only while a merge is shown", function()
     local before = vim.o.diffopt
     H.ok(before:find("linematch", 1, true), "default has linematch")

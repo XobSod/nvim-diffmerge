@@ -305,7 +305,7 @@ function View:update_winbars()
   for role, win in pairs(self.layout.wins) do
     local info = self.infos[role]
     if util.win_valid(win) and info then
-      vim.wo[win].winbar = self:winbar_for(role, info, self.current)
+      util.set_wo(win, "winbar", self:winbar_for(role, info, self.current))
     end
   end
 end
@@ -389,7 +389,8 @@ function View:show_entry(entry, opts)
         vim.cmd("diffthis")
       end
     end)
-    vim.wo[win].winhighlight = ""
+    util.set_wo(win, "winhighlight", "")
+    util.set_wo(win, "cursorlineopt", util.global_wo("cursorlineopt"))
   end
   if not special then
     api.nvim_win_call(self.layout.wins[self.layout.roles[1]], function()
@@ -459,8 +460,9 @@ function M.clean_window(win)
       vim.cmd("diffoff")
     end
   end)
-  vim.wo[win].winbar = api.nvim_get_option_value("winbar", { scope = "global" })
-  vim.wo[win].winhighlight = api.nvim_get_option_value("winhighlight", { scope = "global" })
+  for _, name in ipairs({ "winbar", "winhighlight", "cursorlineopt" }) do
+    util.set_wo(win, name, util.global_wo(name))
+  end
 end
 
 function View:watch_window(win)

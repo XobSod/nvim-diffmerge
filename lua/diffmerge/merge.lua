@@ -774,7 +774,9 @@ function M.attach(view, entry, infos)
   })
   for _, win in pairs(view.layout.wins) do
     if util.win_valid(win) then
-      vim.wo[win].winhighlight = MUTE
+      util.set_wo(win, "winhighlight", MUTE)
+      -- the cursor line would cover the colours: only its number shows it
+      util.set_wo(win, "cursorlineopt", "number")
     end
   end
   -- the merged file may be open in other windows too: colours and signs only here

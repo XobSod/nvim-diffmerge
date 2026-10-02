@@ -214,6 +214,17 @@ function M.win_valid(win)
   return win ~= nil and vim.api.nvim_win_is_valid(win)
 end
 
+--- Sets a window option for `win` only (`vim.wo[win]` also sets the global value when `win`
+--- is the current window).
+function M.set_wo(win, name, value)
+  vim.api.nvim_set_option_value(name, value, { scope = "local", win = win })
+end
+
+--- The global value of a window option (what windows have without DiffMerge).
+function M.global_wo(name)
+  return vim.api.nvim_get_option_value(name, { scope = "global" })
+end
+
 function M.buf_valid(buf)
   return buf ~= nil and vim.api.nvim_buf_is_valid(buf)
 end

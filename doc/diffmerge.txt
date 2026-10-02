@@ -295,8 +295,9 @@ column status view; DiffMerge paints the changed characters itself, following
 last changed character) or "inline:none", and "iwhite", "iwhiteall",
 "iwhiteeol", "icase". Changes to 'diffopt' apply at once. The lines of a
 changed block are compared row by row, the way these views show them; lines
-longer than 1000 bytes are not refined. On the line with the cursor,
-'cursorline' covers these colours (diff lines draw the cursor line on top).
+longer than 1000 bytes are not refined. 'cursorline' would cover these
+colours on the cursor's line, so these windows set 'cursorlineopt' to
+"number": the cursor line shows in its line number only.
 
 ==============================================================================
 5. GIT DIFFTOOL / MERGETOOL                                     *diffmerge-git*

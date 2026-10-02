@@ -39,14 +39,25 @@ local palette = {
   violet = 0xc678dd,
 }
 
+--- The attributes of a group, not a link to it: merge and three-column windows remap the
+--- Diff* groups (winhighlight), which would also remap a link.
+local function copy(name)
+  local ok, hl = pcall(api.nvim_get_hl, 0, { name = name, link = false })
+  if not ok then
+    return {}
+  end
+  hl.default = nil
+  return hl
+end
+
 local function defaults()
   local bg = background()
   local light = vim.o.background == "light"
   local a = light and 0.18 or 0.28
   local set = {
-    DiffMergeAdd = { link = "DiffAdd" },
-    DiffMergeChange = { link = "DiffChange" },
-    DiffMergeText = { link = "DiffText" },
+    DiffMergeAdd = copy("DiffAdd"),
+    DiffMergeChange = copy("DiffChange"),
+    DiffMergeText = copy("DiffText"),
     DiffMergeDelete = { link = "DiffDelete" },
     DiffMergeConflict = { bg = M.blend(palette.red, bg, a + 0.05) },
     DiffMergeResolved = { bg = M.blend(palette.green, bg, a - 0.06) },
@@ -56,6 +67,14 @@ local function defaults()
     DiffMergeUnstaged = { bg = M.blend(palette.yellow, bg, a - 0.08) },
     DiffMergeStaged = { bg = M.blend(palette.green, bg, a - 0.06) },
     DiffMergeMixed = { bg = M.blend(palette.violet, bg, a - 0.04) },
+    -- changed characters, a stronger tone of their line's colour
+    DiffMergeConflictText = { bg = M.blend(palette.red, bg, a + 0.27), bold = true },
+    DiffMergeResolvedText = { bg = M.blend(palette.green, bg, a + 0.14) },
+    DiffMergeEditedText = { bg = M.blend(palette.violet, bg, a + 0.14) },
+    DiffMergeChangeText = copy("DiffText"),
+    DiffMergeUnstagedText = { bg = M.blend(palette.yellow, bg, a + 0.14) },
+    DiffMergeStagedText = { bg = M.blend(palette.green, bg, a + 0.14) },
+    DiffMergeMixedText = { bg = M.blend(palette.violet, bg, a + 0.16) },
     DiffMergeUnstagedSign = { fg = palette.yellow, bold = true },
     DiffMergeStagedSign = { fg = palette.green, bold = true },
     DiffMergeMixedSign = { fg = palette.violet, bold = true },

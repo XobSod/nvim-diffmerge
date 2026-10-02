@@ -149,6 +149,10 @@ would compare every column with every other):
   S  green   staged: the index has it
   ±  violet  mixed: the index holds another version (e.g. partly staged)
 
+Inside a changed line the changed characters are painted in a stronger tone
+(|diffmerge-inline|): an unstaged line against INDEX, a staged one against
+HEAD.
+
 Staging:
 - `<Space>` toggles the line under the cursor between unstaged and staged, in
   any column, then moves on to the next change of the same state, so pressing
@@ -244,6 +248,10 @@ it is:
   sign  ✎           edited by hand (counts as resolved)
   sign  ✓           (side windows) this side is part of the resolution
 
+Inside changed lines the changed characters are painted in a stronger tone
+(|diffmerge-inline|): in a conflict LOCAL and REMOTE against each other (what
+the choice is about), a one-sided change against BASE, MERGED against BASE.
+
 Resolving, in any window of the merge layout, for the chunk under the cursor:
 
   <leader>1   toggle LOCAL (mine)      toggling appends / removes, so
@@ -262,6 +270,16 @@ file that was saved half-resolved finds the unresolved conflicts again.
 
 During a rebase "ours" is the branch being rebased onto and "theirs" is your
 commit; the window bars say so.
+
+                                                             *diffmerge-inline*
+Vim's own inline highlighting is muted in merge windows and in the three
+column status view; DiffMerge paints the changed characters itself, following
+'diffopt': "inline:char" (default), "inline:word", "inline:simple" (first to
+last changed character) or "inline:none", and "iwhite", "iwhiteall",
+"iwhiteeol", "icase". Changes to 'diffopt' apply at once. The lines of a
+changed block are compared row by row, the way these views show them; lines
+longer than 1000 bytes are not refined. On the line with the cursor,
+'cursorline' covers these colours (diff lines draw the cursor line on top).
 
 ==============================================================================
 5. GIT DIFFTOOL / MERGETOOL                                     *diffmerge-git*
@@ -370,6 +388,8 @@ Conflict colours are blended from the Normal background.
 
   DiffMergeConflict / Resolved / Edited      merge chunk backgrounds
   DiffMergeUnstaged / Staged / Mixed         status columns (+ ...Sign)
+  DiffMerge{Conflict,Resolved,Edited,Change}Text
+  DiffMerge{Unstaged,Staged,Mixed}Text       changed characters (inline)
   DiffMergeAdd / Change                      auto-merged chunks (-> DiffAdd…)
   DiffMergeConflictSign / ResolvedSign / EditedSign / LocalSign / RemoteSign
   DiffMergeStatusAdded / Modified / Deleted / Renamed / Unmerged / Untracked

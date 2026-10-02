@@ -8,6 +8,7 @@
 local config = require("diffmerge.config")
 local diff3 = require("diffmerge.diff3")
 local hunks = require("diffmerge.hunks")
+local inline = require("diffmerge.inline")
 local source = require("diffmerge.source")
 local util = require("diffmerge.util")
 
@@ -280,6 +281,7 @@ function M.attach(view, entry, infos)
     buf = infos.merged.buf,
     regions = {},
     hint = key_hint(),
+    inline = inline.cache(),
   }, Controller)
   -- sides without a window (BASE in the 3-way layouts) are read directly
   local function lines_for(role)
@@ -384,6 +386,16 @@ function M.attach(view, entry, infos)
       end,
     })
   end
+  -- inline differences follow 'diffopt' (inline:, iwhite, icase)
+  api.nvim_create_autocmd("OptionSet", {
+    group = self.augroup,
+    pattern = "diffopt",
+    callback = function()
+      vim.schedule(function()
+        self:render()
+      end)
+    end,
+  })
   -- 'diffopt' is global: only drop linematch while this merge is on screen
   api.nvim_create_autocmd("TabLeave", {
     group = self.augroup,
@@ -580,6 +592,29 @@ function Controller:style(r)
   return { hl = hl, sign = "=", sign_hl = "DiffMergeBothSign" }
 end
 
+-- character level differences, by the colour of their chunk
+local TEXT = {
+  DiffMergeConflict = "DiffMergeConflictText",
+  DiffMergeResolved = "DiffMergeResolvedText",
+  DiffMergeEdited = "DiffMergeEditedText",
+  DiffMergeAdd = "DiffMergeChangeText",
+  DiffMergeChange = "DiffMergeChangeText",
+}
+
+--- Paints the inline differences of `lines` (shown from `row` on) against `ref`.
+function Controller:paint_inline(buf, row, lines, ref, group)
+  local ranges = self.inline(lines, ref)
+  for k, list in pairs(ranges) do
+    for _, r in ipairs(list) do
+      pcall(api.nvim_buf_set_extmark, buf, ns_hl, row + k - 1, r[1], {
+        end_col = r[2],
+        hl_group = group,
+        priority = 70,
+      })
+    end
+  end
+end
+
 local relevant = {
   ["local"] = { ["local"] = true, both = true, conflict = true },
   remote = { remote = true, both = true, conflict = true },
@@ -628,6 +663,11 @@ function Controller:render()
         opts.virt_text_pos = "eol"
       end
     end
+    if e > s and not self:is_unresolved(r) then
+      -- what the merge changed against BASE
+      local content = api.nvim_buf_get_lines(buf, s, e, false)
+      self:paint_inline(buf, s, content, diff3.slice(self.lines.base, r.chunk.base), TEXT[style.hl])
+    end
     local row = s
     if s == e and s > 0 then
       row = s - 1 -- empty region: annotate the line above
@@ -653,6 +693,26 @@ function Controller:render()
             hl_eol = true,
             priority = 60,
           })
+          -- a conflict's sides against each other (what the choice is about), a one-sided
+          -- change (and BASE) against what replaced / was replaced
+          local ref
+          if r.kind == "conflict" then
+            ref = role == "remote" and "local" or "remote"
+            if role == "base" then
+              ref = "local"
+            end
+          elseif role == "base" then
+            ref = r.kind == "remote" and "remote" or "local"
+          else
+            ref = "base"
+          end
+          self:paint_inline(
+            info.buf,
+            rr[1],
+            diff3.slice(self.lines[role], rr),
+            diff3.slice(self.lines[ref], r.chunk[ref]),
+            TEXT[hl]
+          )
         end
         if rr[2] > rr[1] and r.picks and contains(r.picks, SRC_INDEX[role]) and not r.edited then
           pcall(api.nvim_buf_set_extmark, info.buf, ns_hl, rr[1], 0, {

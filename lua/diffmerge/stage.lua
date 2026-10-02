@@ -10,6 +10,7 @@
 --- other); a change keeps its colour in every column, so (un)staging it visibly moves it.
 local diff3 = require("diffmerge.diff3")
 local hunks = require("diffmerge.hunks")
+local inline = require("diffmerge.inline")
 local merge = require("diffmerge.merge")
 local util = require("diffmerge.util")
 
@@ -37,12 +38,21 @@ local SIGNS = {
 }
 local ROLES = { "head", "worktree", "index" }
 
+-- character level differences, by state
+local TEXT = { unstaged = "DiffMergeUnstagedText", staged = "DiffMergeStagedText", mixed = "DiffMergeMixedText" }
+-- the version a changed line is compared with: what it will become / what it replaces
+local REF = {
+  worktree = { unstaged = "index", mixed = "index", staged = "head" },
+  index = { unstaged = "worktree", mixed = "worktree", staged = "head" },
+  head = { unstaged = "worktree", mixed = "index", staged = "index" },
+}
+
 ---@class diffmerge.StageController
 local Controller = {}
 Controller.__index = Controller
 
 function M.attach(view, entry, infos)
-  local self = setmetatable({ view = view, entry = entry, infos = infos, chunks = {} }, Controller)
+  local self = setmetatable({ view = view, entry = entry, infos = infos, chunks = {}, inline = inline.cache() }, Controller)
   self:compute()
   for _, role in ipairs({ "worktree", "index" }) do
     local info = infos[role]
@@ -67,6 +77,14 @@ function M.attach(view, entry, infos)
   -- aligned by position, like merges (linematch staggers versions across 3 windows)
   merge.suspend_linematch()
   self.augroup = api.nvim_create_augroup("DiffMergeStage" .. view.layout.tab, { clear = true })
+  -- colours follow 'diffopt' (algorithm, inline:, iwhite, icase)
+  api.nvim_create_autocmd("OptionSet", {
+    group = self.augroup,
+    pattern = "diffopt",
+    callback = function()
+      self:schedule()
+    end,
+  })
   api.nvim_create_autocmd("TabLeave", {
     group = self.augroup,
     callback = function()
@@ -186,8 +204,11 @@ function Controller:compute()
   local wt_changed, idx_changed
   -- segments: working tree / index ranges with a state
   self.segments = {}
+  self.chunks = {}
+  self.text = { head = head, worktree = wt, index = index }
   for _, c in ipairs(diff3.compute(head, wt, index, opts)) do
     if c.kind ~= "equal" then
+      self.chunks[#self.chunks + 1] = c
       local class = CLASS[c.kind]
       if c.kind == "conflict" then
         wt_changed = wt_changed or changed_lines(head, wt, opts)
@@ -295,6 +316,47 @@ function Controller:render()
                 sign_text = style.sign,
                 sign_hl_group = style.sign_hl,
                 priority = 60,
+              })
+            end
+          end
+        end
+      end
+    end
+  end
+  self:render_inline()
+end
+
+--- Character level differences: each changed line against the version it is compared with
+--- (REF), lines paired the way they are shown.
+function Controller:render_inline()
+  local classes = {}
+  for _, role in ipairs(ROLES) do
+    classes[role] = {}
+    for _, item in ipairs(self:ranges(role)) do
+      for l = item.range[1], item.range[2] - 1 do
+        classes[role][l] = item.class
+      end
+    end
+  end
+  for _, c in ipairs(self.chunks) do
+    for _, role in ipairs(ROLES) do
+      local info = self.infos[role]
+      local r = c[COLUMN[role]]
+      if info and info.src.kind ~= "empty" and r[2] > r[1] and api.nvim_buf_is_valid(info.buf) then
+        local mine = diff3.slice(self.text[role], r)
+        local by_ref = {}
+        for l = r[1], r[2] - 1 do
+          local class = classes[role][l]
+          local ref = class and REF[role][class]
+          if ref then
+            if not by_ref[ref] then
+              by_ref[ref] = self.inline(mine, diff3.slice(self.text[ref], c[COLUMN[ref]]))
+            end
+            for _, x in ipairs(by_ref[ref][l - r[1] + 1] or {}) do
+              pcall(api.nvim_buf_set_extmark, info.buf, ns, l, x[1], {
+                end_col = x[2],
+                hl_group = TEXT[class],
+                priority = 70,
               })
             end
           end

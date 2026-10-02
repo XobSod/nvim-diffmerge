@@ -36,9 +36,17 @@ function M.worktree(path)
   return { kind = "worktree", path = path, label = "WORKING TREE" }
 end
 
+---@param opts? { label?: string, readonly?: boolean, path?: string, follow?: boolean } follow: a symbolic link shows the file it points to
 function M.file(abspath, opts)
   opts = opts or {}
-  return { kind = "file", abspath = abspath, label = opts.label, readonly = opts.readonly, path = opts.path }
+  return {
+    kind = "file",
+    abspath = abspath,
+    label = opts.label,
+    readonly = opts.readonly,
+    path = opts.path,
+    follow = opts.follow,
+  }
 end
 
 function M.empty(label, role)
@@ -64,6 +72,12 @@ local registry = {}
 ---@type table<integer, diffmerge.BufInfo>
 local by_buf = {}
 
+--- The file a file source shows: with `follow`, what a symbolic link points to (a pipe has no
+--- such path: the link itself).
+local function file_path(src)
+  return src.follow and vim.uv.fs_realpath(src.abspath) or src.abspath
+end
+
 local function key_of(repo, src)
   local root = repo and repo.root or ""
   if src.kind == "rev" then
@@ -75,7 +89,7 @@ local function key_of(repo, src)
   elseif src.kind == "worktree" then
     return "file:" .. vim.fs.joinpath(root, src.path)
   elseif src.kind == "file" then
-    return "file:" .. src.abspath
+    return "file:" .. file_path(src)
   end
   return ("empty:%s:%s"):format(src.role or "", src.label or "")
 end
@@ -205,9 +219,12 @@ local function placeholder(src, text)
 end
 
 local function create_real(repo, src)
-  local abs = src.kind == "worktree" and vim.fs.joinpath(repo.root, src.path) or src.abspath
+  -- (a followed link opens as the file it points to: save hooks find that file's project)
+  local abs = src.kind == "worktree" and vim.fs.joinpath(repo.root, src.path) or file_path(src)
   local lstat = vim.uv.fs_lstat(abs)
-  if lstat and lstat.type == "link" then
+  if lstat and lstat.type == "link" and src.follow then
+    lstat = vim.uv.fs_stat(abs)
+  elseif lstat and lstat.type == "link" then
     -- git stores the link target, not the file it points to
     return placeholder(src, "Symbolic link → " .. (vim.uv.fs_readlink(abs) or "?"))
   end
@@ -234,7 +251,22 @@ local function create_real(repo, src)
   local buf = vim.fn.bufadd(abs)
   local was_loaded = api.nvim_buf_is_loaded(buf)
   if not was_loaded then
-    vim.fn.bufload(buf)
+    vim.v.errmsg = ""
+    vim.cmd("silent! call bufload(" .. buf .. ")")
+    local err = vim.v.errmsg
+    if not api.nvim_buf_is_loaded(buf) then
+      error(err ~= "" and err or ("cannot load " .. abs))
+    end
+    -- another swap file (the file open in another Neovim, or left by a crash): the file is
+    -- loaded all the same; read-only here, as Vim's "Open Read-Only"
+    local swap = vim.fn.swapname(buf)
+    if err:find("E325", 1, true) or (swap ~= "" and not swap:match("%.swp$")) then
+      vim.bo[buf].readonly = true
+      util.warn(vim.fn.fnamemodify(abs, ":~:.") .. " has a swap file (open elsewhere, or left by a crash): opened read-only")
+    end
+    if err ~= "" and not err:find("E325", 1, true) then
+      util.warn(err)
+    end
   end
   local info = {
     buf = buf,

@@ -114,6 +114,13 @@ function M.difftool(left, right, name, opts)
   return require("diffmerge.view.diff").open_difftool(left, right, name, opts)
 end
 
+--- Two files, or two directories, side by side (both editable).
+---@param opts? { startup?: boolean }
+function M.compare(left, right, opts)
+  M.ensure_setup()
+  return require("diffmerge.view.diff").open_compare(left, right, opts)
+end
+
 --- `git mergetool` entry point.
 function M.mergetool(local_path, base_path, remote_path, merged_path, opts)
   M.ensure_setup()

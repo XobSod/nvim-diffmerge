@@ -85,10 +85,28 @@ With lazy.nvim: >lua
                         file). Single files follow renames.
 :'<,'>DiffMerge history History of the selected lines (`git log -L`).
 
+:DiffMerge compare [left right]
+                        Two files, or two directories (with a file panel),
+                        side by side; both sides are editable (binary files
+                        and a missing side show a placeholder). Symbolic links
+                        show the file they point to. Directory compares leave
+                        out `.git`, follow links to directories only inside
+                        the compared directories, and drop a file from the
+                        list once saved the same as its other side (`R`
+                        compares everything again). A file open in another
+                        Neovim is shown read-only. `%` / `#` at the start of
+                        an argument are the current / alternate file (`%.orig`,
+                        `%:h/b.txt`); nothing else is expanded. Started
+                        without arguments, they are taken from the argument
+                        list, e.g. a shell alias: >sh
+                          alias dmdiff='nvim -c "DiffMerge compare" --'
+                          dmdiff old.txt new.txt
+<
 :DiffMerge difftool [left right [name]]
 :DiffMerge mergetool [local base remote merged]
-                        Entry points for |diffmerge-git|. Without arguments
-                        the files are taken from the argument list.
+                        Entry points for |diffmerge-git|. Started without
+                        arguments, the files are taken from the argument
+                        list.
 
 :DiffMerge close        Close the view of the current tab.
 :DiffMerge close_all    Close every view (e.g. before saving a session:
@@ -318,9 +336,10 @@ In `~/.gitconfig`: >gitconfig
       mt = !nvim -c \"DiffMerge conflicts\"
 <
 `git difftool -d` passes two temporary directories; they are compared with a
-file panel. With `--no-symlinks` git copies edits of right-side files back to
-the working tree when Neovim exits (only when the right side is the working
-tree, not with `--staged`).
+file panel. When the right side is the working tree (not with `--staged`),
+its files are edited: by default git links them into the temporary
+directory, so saving writes the working tree file at once; with
+`--no-symlinks` git copies the edits back when Neovim exits.
 
 `git mergetool` runs the tool once per file. Neovim exits with code 1 (git
 restores the file and reports the merge as failed) while conflicts are
@@ -426,6 +445,7 @@ Conflict colours are blended from the Normal background.
     dm.log({ args = { "--author=me" } })
     dm.history(path, { range = { first, last } })
     dm.difftool(left, right, name)
+    dm.compare(left, right)
     dm.mergetool(local_, base, remote, merged)
     dm.current()   -- view of the current tab
     dm.close()

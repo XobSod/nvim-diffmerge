@@ -20,6 +20,8 @@ dependencies, Neovim 0.12+.
   (`m` `m`: `git diff A B`, `t`: `A...B`) or select a range (`V` … `<CR>`: combined changes);
   Working tree / Index rows; file, directory and line (`-L`) history.
 - **git difftool / mergetool** — files and `--dir-diff` directories; proper exit codes.
+- **Any two files or directories** — `nvim -c "DiffMerge compare" -- old new` (e.g. as a
+  shell alias), both sides editable.
 
 ```
  main                    │ LOCAL · ours · main         │ MERGED · 1/2 conflicts resolved │ REMOTE · theirs · feature

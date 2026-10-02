@@ -15,6 +15,35 @@ local function current_view()
   return view
 end
 
+--- The files of a `nvim -c "DiffMerge …" -- files…` start (git's tools, a shell alias): the
+--- argument list, while Neovim is starting only.
+local function startup_args(args)
+  if #args == 0 and vim.v.vim_did_enter == 0 then
+    return vim.fn.argv(), true
+  end
+  return args, false
+end
+
+--- A typed file argument starting with `%` / `#` (the current / alternate file, with
+--- modifiers): that part replaced, as Vim does (`%.orig`, `%:h/b.txt`); `\%`, `\#` for a
+--- literal one. Nothing else is expanded: no shell commands, no variables.
+local function expand(arg)
+  local literal = arg:match("^\\([%%#].*)$")
+  if literal then
+    return literal
+  end
+  local special = arg:match("^[%%#]%d*")
+  if not special then
+    return arg
+  end
+  local pos = #special + 1
+  while arg:match("^:[phtre~.]", pos) do
+    pos = pos + 2
+  end
+  local expanded = vim.fn.expand(arg:sub(1, pos - 1))
+  return expanded ~= "" and (expanded .. arg:sub(pos)) or arg
+end
+
 M.subcommands = {
   status = function()
     dm().status()
@@ -33,21 +62,29 @@ M.subcommands = {
     dm().history(args[1], { range = range })
   end,
   difftool = function(args)
-    local startup = #args == 0
-    if startup then
-      args = vim.fn.argv()
-    end
+    local startup
+    args, startup = startup_args(args)
     if #args < 2 then
       util.err("usage: DiffMerge difftool {left} {right} [name]")
       return
     end
     dm().difftool(args[1], args[2], args[3], { startup = startup })
   end,
-  mergetool = function(args)
-    local startup = #args == 0
-    if startup then
-      args = vim.fn.argv()
+  compare = function(args)
+    local startup
+    args, startup = startup_args(args)
+    if #args ~= 2 then
+      util.err("usage: DiffMerge compare {left} {right}")
+      return
     end
+    if not startup then
+      args = vim.tbl_map(expand, args)
+    end
+    dm().compare(args[1], args[2], { startup = startup })
+  end,
+  mergetool = function(args)
+    local startup
+    args, startup = startup_args(args)
     if #args < 4 then
       util.err("usage: DiffMerge mergetool {local} {base} {remote} {merged}")
       return
@@ -158,8 +195,15 @@ function M.complete(arglead, cmdline, _)
       end, filter(refs(), rest))
     end
     return filter(list, arglead)
-  elseif sub == "history" or sub == "difftool" or sub == "mergetool" then
-    return vim.fn.getcompletion(arglead, "file")
+  elseif sub == "history" or sub == "difftool" or sub == "mergetool" or sub == "compare" then
+    -- as typed: the arguments are split at unescaped spaces, compare expands a leading % / #
+    return vim.tbl_map(function(f)
+      f = f:gsub("([\\ ])", "\\%1")
+      if sub == "compare" and f:match("^[%%#]") then
+        f = "\\" .. f
+      end
+      return f
+    end, vim.fn.getcompletion(arglead, "file"))
   elseif sub == "layout" then
     return filter({ "side_by_side", "stacked", "four_way" }, arglead)
   end

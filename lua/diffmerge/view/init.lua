@@ -356,7 +356,15 @@ function View:show_entry(entry, opts)
   local infos = {}
   for _, role in ipairs(self.layout.roles) do
     local src = entry.sides[role] or source.empty("(none)", role)
-    infos[role] = source.acquire(self.repo, src)
+    local ok, info = pcall(source.acquire, self.repo, src)
+    if not ok then
+      -- the sides acquired so far are not shown: let them go
+      for _, got in pairs(infos) do
+        source.release(got)
+      end
+      error(info, 0)
+    end
+    infos[role] = info
   end
   local special = false
   for _, info in pairs(infos) do

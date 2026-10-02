@@ -6,11 +6,12 @@ dependencies, Neovim 0.12+.
 - **Status view** — Conflicts / Staged / Unstaged / Untracked, like `git status`. Files open as
   `HEAD | WORKING TREE | INDEX` (only the columns that differ); `<Space>` toggles the line
   under the cursor between unstaged and staged (lazygit style), `-` the hunk, visual mode the
-  selection — the change stays in view and changes colour.
+  selection — the change stays in view and changes colour; `X` discards it. Opened from a file,
+  it shows that file at the cursor's line.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.
 - **Merges, meld-style** — auto-merged result in the middle, conflicts show the base text;
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),
-  undo just works.
+  undo just works; `<leader>1` / `<leader>3` in the file panel take a side for the whole file.
   Layouts: `mine | merged | other` (side by side or stacked) and `mine | base | other / merged`.
 - **Log & history** — `git log --graph` with git's colours; preview commits; mark two rows
   (`m` `m`: `git diff A B`, `t`: `A...B`) or select a range (`V` … `<CR>`: combined changes);

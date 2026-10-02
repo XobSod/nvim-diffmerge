@@ -37,11 +37,24 @@ end
 
 M.repo_for = repo_for
 
---- Status view (Conflicts / Staged / Unstaged / Untracked).
----@param opts? { conflicts?: boolean, path?: string }
+--- Status view (Conflicts / Staged / Unstaged / Untracked), showing the current file (if it
+--- has changes) at the cursor's line.
+---@param opts? { conflicts?: boolean, path?: string, focus?: { abs: string, line: integer, lines?: string[] } }
 function M.status(opts)
   M.ensure_setup()
   opts = opts or {}
+  if not opts.focus then
+    -- opened from a file: show that file, at the cursor's line
+    local name = vim.api.nvim_buf_get_name(0)
+    if name ~= "" and vim.bo.buftype == "" and not name:match("^%w+://") then
+      opts.focus = {
+        abs = vim.fs.normalize(name),
+        line = vim.api.nvim_win_get_cursor(0)[1],
+        -- the text the line refers to (showing a conflict rewrites its markers)
+        lines = require("diffmerge.util").buf_lines(0),
+      }
+    end
+  end
   local repo = repo_for(opts.path)
   if repo then
     return require("diffmerge.view.status").open(repo, opts)

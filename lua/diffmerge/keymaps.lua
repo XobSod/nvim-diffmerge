@@ -13,11 +13,11 @@ M.descriptions = {
   help = "Show keymaps",
   toggle_stage_hunk = "Stage / unstage hunk (visual: selected lines)",
   toggle_stage_line = "Stage / unstage the line under the cursor (visual: selected lines)",
+  discard_change = "Discard the unstaged hunk under the cursor (visual: selected lines)",
   toggle_local = "Toggle LOCAL (mine) in the chunk",
   toggle_base = "Toggle BASE in the chunk",
   toggle_remote = "Toggle REMOTE (theirs) in the chunk",
   take_none = "Resolve the chunk with nothing",
-  put_side = "Put this side into MERGED (replaces the chunk)",
   next_conflict = "Next conflict",
   prev_conflict = "Previous conflict",
   next_chunk = "Next change",
@@ -29,6 +29,8 @@ M.descriptions = {
   stage_all = "Stage everything",
   unstage_all = "Unstage everything",
   discard = "Discard changes (confirm)",
+  take_local_file = "Conflict: take LOCAL (ours) for the whole file",
+  take_remote_file = "Conflict: take REMOTE (theirs) for the whole file",
   toggle_tree = "Toggle tree / list",
   refresh = "Refresh",
   close = "Close the view",
@@ -47,6 +49,7 @@ M.descriptions = {
 M.visual = {
   toggle_stage_hunk = true,
   toggle_stage_line = true,
+  discard_change = true,
   select = true,
   toggle_stage = true,
 }
@@ -183,8 +186,6 @@ function M.help(buf)
     local lhs = r.lhs:gsub("<leader>", vim.g.mapleader and ("<leader>(" .. vim.g.mapleader .. ")") or "<leader>")
     lines[#lines + 1] = ("   %s  %s"):format(lhs .. string.rep(" ", width - vim.fn.strdisplaywidth(r.lhs)), r.desc)
   end
-  lines[#lines + 1] = ""
-  lines[#lines + 1] = " Native diff keys keep working: do / dp / ]c / [c (2-way)"
   local hbuf = api.nvim_create_buf(false, true)
   api.nvim_buf_set_lines(hbuf, 0, -1, false, lines)
   vim.bo[hbuf].modifiable = false

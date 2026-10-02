@@ -124,15 +124,6 @@ H.describe("merge regions", function()
     H.eq(H.buf_lines(buf), { "a", "b", "FEAT", "MAIN" })
   end)
 
-  H.it("dp in a side window puts that side", function()
-    local _, view, buf = conflict({ "a", "b", "c" }, { "a", "FEAT", "c" }, { "a", "MAIN", "c" })
-    local rwin = view.layout.wins.remote
-    api.nvim_set_current_win(rwin)
-    api.nvim_win_set_cursor(rwin, { 2, 0 })
-    view:dispatch("put_side", { win = rwin, buf = api.nvim_win_get_buf(rwin) })
-    H.eq(H.buf_lines(buf), { "a", "FEAT", "c" })
-  end)
-
   H.it("suspends linematch only while a merge is shown", function()
     local before = vim.o.diffopt
     H.ok(before:find("linematch", 1, true), "default has linematch")

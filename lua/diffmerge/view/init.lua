@@ -730,9 +730,6 @@ local merge_actions = {
   take_none = function(m, ctx)
     m:take_none(ctx)
   end,
-  put_side = function(m, ctx)
-    m:put_side(ctx)
-  end,
   next_conflict = function(m, ctx)
     m:jump(ctx, 1, true)
   end,

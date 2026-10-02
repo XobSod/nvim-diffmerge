@@ -19,6 +19,18 @@ local ns_hl = api.nvim_create_namespace("diffmerge_merge")
 M.ns_hl = ns_hl
 
 local SRC = { "local", "base", "remote" }
+
+-- what DiffMerge itself put into a merged buffer (an unsaved change that is not the user's)
+local written = {}
+
+--- The merged buffer has unsaved changes made by the user (not just DiffMerge's start).
+function M.user_changes(buf)
+  if not vim.bo[buf].modified then
+    return false
+  end
+  local own = written[buf]
+  return not (own and util.lines_equal(util.buf_lines(buf), own))
+end
 local SRC_INDEX = { ["local"] = 1, base = 2, remote = 3 }
 
 local CANDIDATES = {
@@ -307,6 +319,7 @@ function M.attach(view, entry, infos)
     -- fresh conflict: start from the auto-merge result (one undo step)
     if vim.bo[self.buf].modifiable then
       api.nvim_buf_set_lines(self.buf, 0, -1, false, result)
+      written[self.buf] = result
     end
   elseif not util.lines_equal(current, result) then
     located = M.locate(ranges, result, current)
@@ -743,21 +756,6 @@ function Controller:take_none(ctx)
     return
   end
   self:set_region(r, {}, ctx.win)
-end
-
---- `dp` in a side window: the chunk becomes exactly this side (meld's "push").
-function Controller:put_side(ctx)
-  local role = self.view.layout:role_of(ctx.win)
-  if not SRC_INDEX[role] then
-    util.info("dp works in the LOCAL / BASE / REMOTE windows; in MERGED use the pick keys")
-    return
-  end
-  local r = self:region_at(ctx.win)
-  if not r then
-    util.info("no change under the cursor")
-    return
-  end
-  self:set_region(r, { SRC_INDEX[role] })
 end
 
 function Controller:start_in(r, role)

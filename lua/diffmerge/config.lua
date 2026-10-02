@@ -68,6 +68,7 @@ M.defaults = {
     diff = {
       ["-"] = "toggle_stage_hunk",
       ["<Space>"] = "toggle_stage_line",
+      ["X"] = "discard_change",
     },
     -- windows of a merge layout
     merge = {
@@ -75,7 +76,6 @@ M.defaults = {
       ["<leader>2"] = "toggle_base",
       ["<leader>3"] = "toggle_remote",
       ["<leader>0"] = "take_none",
-      ["dp"] = "put_side",
       ["]x"] = "next_conflict",
       ["[x"] = "prev_conflict",
       ["]c"] = "next_chunk",
@@ -91,6 +91,8 @@ M.defaults = {
       ["S"] = "stage_all",
       ["U"] = "unstage_all",
       ["X"] = "discard",
+      ["<leader>1"] = "take_local_file",
+      ["<leader>3"] = "take_remote_file",
       ["i"] = "toggle_tree",
       ["R"] = "refresh",
       ["q"] = "close",

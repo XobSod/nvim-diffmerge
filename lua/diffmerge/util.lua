@@ -157,6 +157,29 @@ function M.buf_lines(buf, info)
   return lines
 end
 
+--- Changes a buffer from `old` to `new` lines, touching only the lines that differ (cursor,
+--- marks and undo stay as local as possible).
+function M.replace_lines(buf, old, new)
+  if #old == 0 or #new == 0 then
+    -- an empty buffer still has one (phantom) line: replace everything
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, new)
+    return
+  end
+  local text = function(lines)
+    return #lines == 0 and "" or (table.concat(lines, "\n") .. "\n")
+  end
+  local idx = vim.text.diff(text(old), text(new), { result_type = "indices" }) or {}
+  for i = #idx, 1, -1 do
+    local as, ac, bs, bc = idx[i][1], idx[i][2], idx[i][3], idx[i][4]
+    local first = ac == 0 and as or as - 1
+    local lines = {}
+    for k = bs, bs + bc - 1 do
+      lines[#lines + 1] = new[k]
+    end
+    vim.api.nvim_buf_set_lines(buf, first, first + ac, false, lines)
+  end
+end
+
 --- Limits a namespace's extmarks to the given windows of an owner (a view): overlays on
 --- real file buffers must not show in the user's other windows on the same file.
 --- (nvim__ns_set is experimental; without it the marks show everywhere, as before.)

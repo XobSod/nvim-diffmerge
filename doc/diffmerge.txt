@@ -21,8 +21,9 @@ CONTENTS                                                   *diffmerge-contents*
 1. INTRODUCTION                                               *diffmerge-intro*
 
 DiffMerge shows git comparisons in Vim's own diff mode (|diff|): filler lines,
-scroll binding, folding of unchanged text, |]c| / |[c|, |do| / |dp| all work as
-usual. Every view states the git command it is equivalent to, so there are no
+scroll binding, folding of unchanged text and |]c| / |[c| work as usual.
+Changes are moved by pointing at them: staging, unstaging and discarding a
+line or hunk, picking a side of a conflict. Every view states the git command it is equivalent to, so there are no
 surprises from git's point of view.
 
 - Working tree files are the real buffers: edit and |:w| them.
@@ -60,8 +61,11 @@ With lazy.nvim: >lua
                                                                   *:DiffMerge*
 :DiffMerge [status]     Status view: Conflicts / Staged / Unstaged / Untracked
                         (what `git status` shows). Re-uses an open status view.
+                        Opened from a file with changes it shows that file,
+                        with the cursor on the same line.
 
-:DiffMerge conflicts    Status view with the cursor on the first conflict.
+:DiffMerge conflicts    Status view with the cursor on the first conflict (or
+                        on the current file, if it is in conflict).
 
 :DiffMerge diff [args] [-- paths]
                         Any `git diff` comparison, e.g. >vim
@@ -151,11 +155,24 @@ Staging:
   it again walks through them (lazygit style). A changed line goes together
   with the line shown next to it (the alignment on screen).
 - `-` toggles the whole hunk; visual `-` / `<Space>` the selected lines.
+- `X` discards the unstaged hunk under the cursor (visual: the selected
+  lines): the working tree gets the INDEX version back. The file is saved
+  right away without autocommands (no format-on-save); if it had other
+  unsaved edits it is left unsaved instead. `u` (and |:w|) brings the change
+  back. Staged changes are not discarded: unstage them first; new files have
+  no version to go back to (`X` in the file panel deletes them).
+- When staging or discarding leaves no visible difference, the final newline
+  (which a line diff does not show) moves along, so nothing is left behind
+  that could not be pointed at.
 - File panel: `-` / `<Space>` stage / unstage the file, directory or section
   (visual: every line). On a conflict it marks the file resolved (`git add`)
   after checking for unresolved conflicts / markers. `S` stages everything,
   `U` unstages everything, `X` discards unstaged changes / deletes untracked
   files (asks first).
+- File panel, on a conflict: `<leader>1` / `<leader>3` resolve the whole file
+  with LOCAL (ours) / REMOTE (theirs), e.g. for binary files or lockfiles, and
+  mark it resolved; if that side deleted the file, it is deleted. `git
+  checkout -m <file>` brings the conflict back.
 
 `status.three_way = false` switches back to separate two-way diffs: Staged is
 HEAD | INDEX, Unstaged is INDEX | WORKING TREE (the INDEX side is editable
@@ -233,7 +250,6 @@ Resolving, in any window of the merge layout, for the chunk under the cursor:
   <leader>2   toggle BASE              <leader>1 then <leader>3 gives
   <leader>3   toggle REMOTE (theirs)   "mine, then theirs"
   <leader>0   resolve with nothing
-  dp          (LOCAL / BASE / REMOTE window) replace the chunk with this side
   ]x / [x     next / previous conflict
   ]c / [c     next / previous change
 
@@ -287,6 +303,7 @@ with `keymaps.<group>[lhs] = action | function | false`.
 view (every window)         diff (status diff windows)
   ]f / [f  next_file          -        toggle_stage_hunk (visual: lines)
                               <Space>  toggle_stage_line (visual: lines)
+                              X        discard_change (visual: lines)
   gl       cycle_layout
   <leader>W toggle_whitespace
   g?       help
@@ -296,13 +313,14 @@ merge                        file_panel                log_panel
   <leader>2 toggle_base        l       expand            m     mark
   <leader>3 toggle_remote      h       collapse          M     clear_marks
   <leader>0 take_none          - <Space> toggle_stage    t     toggle_range_mode
-  dp        put_side
   ]x / [x   next/prev_conflict S       stage_all         P     cycle_parent
   ]c / [c   next/prev_chunk    U       unstage_all       K     commit_details
                                X       discard           Y     yank_hash
-                               i       toggle_tree       F     toggle_first_parent
-                               R       refresh           a     toggle_all_branches
-                               q       close             f     filter
+                               <leader>1 take_local_file F     toggle_first_parent
+                               <leader>3 take_remote_file
+                               i       toggle_tree       a     toggle_all_branches
+                               R       refresh           f     filter
+                               q       close
                                                          R     refresh
                                                          q     close
 

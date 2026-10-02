@@ -223,6 +223,9 @@ function M.apply(from, to, hunks, selected)
   for i = pos, #from do
     emit("from", i)
   end
+  if last then
+    last.result = out
+  end
   return out, last
 end
 
@@ -231,6 +234,21 @@ end
 function M.noeol(from, to, last, from_noeol, to_noeol)
   if not last then
     return false
+  end
+  local result_is_to = true
+  -- (the caller passes the result as `last.result` when it may equal `to`)
+  if last.result then
+    result_is_to = #last.result == #to
+    for i = 1, #to do
+      if not result_is_to or last.result[i] ~= to[i] then
+        result_is_to = false
+        break
+      end
+    end
+    if result_is_to then
+      -- every visible difference moved: the final newline (invisible to a line diff) too
+      return to_noeol == true
+    end
   end
   if last.src == "to" then
     return last.idx == #to and to_noeol == true

@@ -2,6 +2,10 @@
 local H = dofile(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h") .. "/harness.lua")
 local api = vim.api
 
+vim.fn.confirm = function()
+  return 1
+end
+
 local function open(dir)
   vim.cmd.cd(dir)
   return require("diffmerge").status()
@@ -190,6 +194,66 @@ H.describe("status columns", function()
     H.eq(view.stagectl:class_at("worktree", 3), "unstaged")
   end)
 
+  H.it("file panel and diff windows end in the same layout", function()
+    -- a partly staged file, three columns
+    local function setup()
+      local dir = H.repo({ ["a.txt"] = { "a", "b", "c" } })
+      H.write(dir, "a.txt", { "A", "b", "c" })
+      H.git(dir, { "add", "a.txt" })
+      H.write(dir, "a.txt", { "A", "b", "C" })
+      local view = open(dir)
+      show(view, "unstaged", "a.txt")
+      H.eq(view.layout.roles, { "head", "worktree", "index" })
+      return dir, view
+    end
+    local function panel(view, action, section)
+      api.nvim_set_current_win(view.layout.files_win)
+      local entry = section and H.find_entry(view, section, "a.txt")
+      if entry then
+        api.nvim_win_set_cursor(0, { view.files:line_of(entry), 0 })
+      end
+      view:dispatch(action, { buf = view.files.buf, win = view.layout.files_win })
+    end
+    local results = {}
+    -- stage what is left: from the diff ...
+    local dir, view = setup()
+    press(view, "worktree", 3, "toggle_stage_hunk")
+    results.diff_stage = { view.layout.roles, H.git(dir, { "status", "--short" }) }
+    view:close()
+    -- ... from the file panel (the Unstaged entry), and with S
+    dir, view = setup()
+    panel(view, "toggle_stage", "unstaged")
+    results.panel_stage = { view.layout.roles, H.git(dir, { "status", "--short" }) }
+    view:close()
+    dir, view = setup()
+    panel(view, "stage_all")
+    results.panel_stage_all = { view.layout.roles, H.git(dir, { "status", "--short" }) }
+    view:close()
+    H.eq(results.panel_stage, results.diff_stage)
+    H.eq(results.panel_stage_all, results.diff_stage)
+    H.eq(results.diff_stage[1], { "head", "index" })
+    -- unstage everything: from the diff, the file panel (the Staged entry) and with U
+    dir, view = setup()
+    press(view, "index", 1, "toggle_stage_hunk")
+    results.diff_unstage = { view.layout.roles, H.git(dir, { "status", "--short" }) }
+    view:close()
+    dir, view = setup()
+    panel(view, "toggle_stage", "staged")
+    results.panel_unstage = { view.layout.roles, H.git(dir, { "status", "--short" }) }
+    view:close()
+    dir, view = setup()
+    panel(view, "unstage_all")
+    results.panel_unstage_all = { view.layout.roles, H.git(dir, { "status", "--short" }) }
+    view:close()
+    H.eq(results.panel_unstage, results.diff_unstage)
+    H.eq(results.panel_unstage_all, results.diff_unstage)
+    H.eq(results.diff_unstage[1], { "head", "worktree" })
+    -- discarding the unstaged change leaves HEAD | INDEX too
+    dir, view = setup()
+    panel(view, "discard", "unstaged")
+    H.eq(view.layout.roles, { "head", "index" })
+  end)
+
   H.it("the two-way mode is still available", function()
     local config = require("diffmerge.config")
     config.options.status.three_way = false
@@ -199,6 +263,15 @@ H.describe("status columns", function()
       local view = open(dir)
       show(view, "unstaged", "a.txt")
       H.eq(view.layout.roles, { "a", "b" })
+      -- same staging code: a staged deletion can be unstaged from the Staged diff
+      local dir2 = H.repo({ ["d.txt"] = { "1", "2" }, ["k.txt"] = { "k" } })
+      H.git(dir2, { "rm", "-q", "d.txt" })
+      view:close()
+      view = open(dir2)
+      show(view, "staged", "d.txt")
+      press(view, "a", 1, "toggle_stage_hunk")
+      H.eq(H.git(dir2, { "status", "--short", "--", "d.txt" }), " D d.txt\n")
+      H.eq(index_of(dir2, "d.txt"), "1\n2\n")
     end)
     config.options.status.three_way = true
     assert(ok, err)

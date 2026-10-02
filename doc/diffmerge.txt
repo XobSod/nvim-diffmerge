@@ -126,10 +126,11 @@ The file panel lists what `git status` shows: Conflicts / Staged (`git diff
   read-only  editable           (the index)
 
 with only the columns that differ: nothing staged yet shows HEAD | WORKING
-TREE, everything staged shows HEAD | INDEX. The columns follow every (un)stage:
-the column a change moves into always appears, so a line you (un)stage stays
-in view, and a column that became identical to its neighbour goes away. Only
-(un)staging removes a column: saving a file, unsaved edits or changes made
+TREE, everything staged shows HEAD | INDEX. The columns follow every (un)stage,
+from the diff windows or the file panel alike (a line, a hunk, the file, `S`,
+`U`, discarding): the column a change moves into always appears, so a line you
+(un)stage stays in view, and a column that became identical to its neighbour
+goes away. Only these actions remove a column: saving a file, unsaved edits or changes made
 elsewhere (lazygit, a terminal) never close the window you work in. The INDEX
 column is read-only here. A file listed under both Staged and Unstaged opens
 the same view.

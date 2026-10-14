@@ -572,20 +572,24 @@ function M.place(reference, regions, current, blocks)
       return overlaps(b.range, at)
     end)
     if not covered then
-      out[#out + 1] = { range = at, kind = r.kind, texts = r.texts, side = r.side }
+      out[#out + 1] = { range = at, kind = r.kind, texts = r.texts, side = r.side, picks = r.picks }
     end
   end
   table.sort(out, by_start)
   return out
 end
 
--- DiffMerge's conversion of a merged buffer with git's markers: the buffer before and after
--- (and the undo state after), the regions placed then and the sides they come from
+-- DiffMerge's conversions of merged files with git's markers, by path (for the session): the
+-- buffer converted, the text before and after (and its undo state after), the regions (as they
+-- are when a merge view is left) and the sides they come from
 local converted = {}
 
-local function conversion(buf, lines)
-  local c = buf and converted[buf]
-  if not c or not api.nvim_buf_is_valid(buf) then
+--- The conversion of the merged file `path` that still describes it.
+---@param buf? integer the file's loaded buffer
+---@param current? string[] the file as it is now
+local function conversion(path, buf, lines, current)
+  local c = path and converted[path]
+  if not c then
     return nil
   end
   for _, role in ipairs(SRC) do
@@ -593,20 +597,33 @@ local function conversion(buf, lines)
       return nil
     end
   end
+  if not (buf and buf == c.buf and api.nvim_buf_is_valid(buf)) then
+    -- the file read anew: the undo state was the old buffer's
+    c.seq = nil
+    if current and M.has_markers(current, lines) then
+      -- git wrote it anew
+      converted[path] = nil
+      return nil
+    end
+  end
   return c
 end
 
-local function remember(buf, c)
-  converted[buf] = c
+--- The conversion follows `buf`, the buffer the file is shown in now.
+local function adopt(path, c, buf)
+  if c.buf == buf then
+    return
+  end
+  c.buf = buf
   api.nvim_create_autocmd("BufReadPost", {
     buffer = buf,
     callback = function()
-      if converted[buf] ~= c then
+      if converted[path] ~= c or c.buf ~= buf then
         return true
       end
       if M.has_markers(util.buf_lines(buf), c.sides) then
         -- git's conflicted file again
-        converted[buf] = nil
+        converted[path] = nil
         return true
       end
       -- the merge as saved: its conflicts are still these, the undo history is another
@@ -619,10 +636,11 @@ end
 --- markers is converted (if `convert`): its blocks replaced by their BASE text. A buffer
 --- DiffMerge converted keeps the conflicts of then; otherwise they are git's merge of the
 --- three versions.
----@param buf? integer the loaded buffer of the merged file
+---@param path string the merged file
+---@param buf? integer its loaded buffer
 ---@return string[] lines, table[] regions, boolean converted
-function M.start(buf, current, lines, cwd, convert)
-  local c = conversion(buf, lines)
+function M.start(path, buf, current, lines, cwd, convert)
+  local c = conversion(path, buf, lines, current)
   if c and not util.lines_equal(current, c.before) then
     return current, M.place(c.lines, c.regions, current), false
   end
@@ -718,7 +736,8 @@ function M.attach(view, entry, infos)
   local L, R = entry.sides["local"], entry.sides.remote
   local modify_delete = (L and L.kind == "empty") ~= (R and R.kind == "empty")
   local before = util.buf_lines(self.buf, infos.merged)
-  local c = conversion(self.buf, self.lines)
+  self.path = vim.fs.normalize(api.nvim_buf_get_name(self.buf))
+  local c = conversion(self.path, self.buf, self.lines, before)
   if c and c.seq and vim.fn.undotree(self.buf).seq_cur < c.seq and util.lines_equal(before, c.before) then
     -- undone to git's markers while the merge was not shown: forward to its start (redo stays)
     api.nvim_buf_call(self.buf, function()
@@ -727,31 +746,34 @@ function M.attach(view, entry, infos)
     before = util.buf_lines(self.buf, infos.merged)
   end
   local cwd = view.repo and view.repo.root ~= "" and view.repo.root or nil
-  local current, placed, changed = M.start(self.buf, before, self.lines, cwd, vim.bo[self.buf].modifiable)
+  local current, placed, changed = M.start(self.path, self.buf, before, self.lines, cwd, vim.bo[self.buf].modifiable)
   if changed then
     -- git's conflicted file: its merge stays, every block starts with its BASE text (one
     -- undo step)
     local had_edits = vim.bo[self.buf].modified
     api.nvim_buf_set_lines(self.buf, 0, -1, false, current)
     written[self.buf] = not had_edits and current or nil
-    remember(self.buf, {
+    converted[self.path] = {
       before = before,
       seq = vim.fn.undotree(self.buf).seq_cur,
       lines = current,
       regions = placed,
       sides = self.lines,
-    })
+    }
+  end
+  if converted[self.path] then
+    adopt(self.path, converted[self.path], self.buf)
   end
   for _, p in ipairs(placed) do
     local region = {
       kind = p.kind,
       texts = p.texts,
       side = p.side,
-      picks = initial_picks(p.kind),
+      picks = p.picks or initial_picks(p.kind),
       edited = false,
     }
     self:set_mark(region, p.range[1], p.range[2])
-    if modify_delete and p.kind == "conflict" then
+    if modify_delete and p.kind == "conflict" and not p.picks then
       region.sticky = api.nvim_buf_get_lines(self.buf, p.range[1], p.range[2], false)
     end
     self.regions[#self.regions + 1] = region
@@ -887,15 +909,17 @@ function Controller:set_mark(r, s, e)
 end
 
 function Controller:detach()
-  local c = converted[self.buf]
+  local c = converted[self.path]
   -- (stale: the text was replaced as a whole, the marks no longer follow it)
   local current = c and not self.detached and not self.stale and api.nvim_buf_is_loaded(self.buf)
-  if current and conversion(self.buf, self.lines) then
+  if current and conversion(self.path, self.buf, self.lines) then
     -- the conversion as it is now: placing it again needs no guessing
     local regions = {}
     for _, r in ipairs(self.regions) do
       local s, e = self:range(r)
-      regions[#regions + 1] = { range = { s, e }, kind = r.kind, texts = r.texts, side = r.side }
+      -- (with the picks: resolved with nothing and BASE can be the same text)
+      local picks = not r.edited and not r.sticky and r.picks or nil
+      regions[#regions + 1] = { range = { s, e }, kind = r.kind, texts = r.texts, side = r.side, picks = picks }
     end
     c.lines, c.regions = util.buf_lines(self.buf), regions
   end
@@ -934,22 +958,29 @@ function Controller:range(r)
   return s, e
 end
 
-function Controller:render_picks(r, picks)
+--- A region's content for `picks` (nil: unresolved, the BASE text).
+local function render(texts, picks)
   if picks == nil then
-    return r.texts.base
+    return texts.base
   end
   local out = {}
   for _, p in ipairs(picks) do
-    util.extend(out, r.texts[SRC[p]])
+    util.extend(out, texts[SRC[p]])
   end
   return out
 end
 
+function Controller:render_picks(r, picks)
+  return render(r.texts, picks)
+end
+
 --- Re-derives the state of every region from the buffer content.
 function Controller:sync()
-  local c = converted[self.buf]
+  local c = converted[self.path]
   if
     c
+    and c.buf == self.buf
+    and c.seq
     and not self.rewinding
     and api.nvim_buf_line_count(self.buf) == math.max(#c.before, 1)
     and util.lines_equal(util.buf_lines(self.buf), c.before)
@@ -1387,9 +1418,9 @@ end
 function M.count_unresolved(repo, entry)
   local lines = M.side_lines(repo, entry)
   local merged = entry.sides.merged
-  local current, buf = {}, nil
+  local current, buf, abs = {}, nil, nil
   if merged and merged.kind ~= "empty" then
-    local abs = merged.kind == "worktree" and vim.fs.joinpath(repo.root, merged.path) or merged.abspath
+    abs = vim.fs.normalize(merged.kind == "worktree" and vim.fs.joinpath(repo.root, merged.path) or merged.abspath)
     buf = util.find_buf(abs)
     if buf and api.nvim_buf_is_loaded(buf) then
       current = util.buf_lines(buf)
@@ -1402,12 +1433,13 @@ function M.count_unresolved(repo, entry)
   -- modify/delete: only an explicit decision resolves it
   local modify_delete = (L and L.kind == "empty") ~= (R and R.kind == "empty")
   local placed
-  current, placed = M.start(buf, current, lines, repo.root ~= "" and repo.root or nil, true)
+  current, placed = M.start(abs, buf, current, lines, repo.root ~= "" and repo.root or nil, true)
   local n = 0
   for _, p in ipairs(placed) do
     if p.kind == "conflict" then
       local content = util.slice(current, p.range[1] + 1, p.range[2])
-      local open = modify_delete or util.lines_equal(content, p.texts.base)
+      local decided = p.picks ~= nil and util.lines_equal(content, render(p.texts, p.picks))
+      local open = not decided and (modify_delete or util.lines_equal(content, p.texts.base))
       if open or (not matcher(p.texts)(content) and M.has_markers(content, lines)) then
         n = n + 1
       end

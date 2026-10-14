@@ -7,6 +7,7 @@ local git = require("diffmerge.git")
 local hunks = require("diffmerge.hunks")
 local parse = require("diffmerge.git_parse")
 local source = require("diffmerge.source")
+local stash = require("diffmerge.stash")
 local util = require("diffmerge.util")
 local views = require("diffmerge.view")
 
@@ -261,10 +262,12 @@ function StatusView:collect(changed)
     labels = labels or git.conflict_labels(repo)
     subtitle = labels.operation or op.kind:upper()
   end
+  local list = { sections.conflicts, sections.staged, sections.unstaged, sections.untracked }
+  vim.list_extend(list, stash.sections(repo))
   return {
     title = title,
     subtitle = subtitle,
-    sections = { sections.conflicts, sections.staged, sections.unstaged, sections.untracked },
+    sections = list,
     empty_text = "Working tree clean",
   }
 end
@@ -294,7 +297,7 @@ function StatusView:stage_entry(e, head, head_label, changed)
   -- only (un)staging takes a column away; saving a file or changes made elsewhere
   -- (lazygit, a terminal) never close the window you work in
   local cur = self.current
-  if not changed and cur and cur.kind == "stage" and cur.path == e.path then
+  if not changed and cur and cur.kind == "stage" and not cur.stash and cur.path == e.path then
     for _, c in ipairs(cur.columns) do
       show[c] = true
     end
@@ -413,6 +416,8 @@ function StatusView:setup_watchers()
   end
   watch(self.repo.gitdir, interesting)
   watch(vim.fs.joinpath(self.repo.gitdir, "refs", "heads"), nil)
+  -- stashes made or dropped elsewhere
+  watch(vim.fs.joinpath(self.repo.gitdir, "refs"), { stash = true })
 end
 
 function StatusView:on_cleanup()
@@ -554,6 +559,10 @@ function StatusView:action_toggle_stage(ctx)
   local entries = self:selected_entries(ctx)
   local by_section = { staged = {}, unstaged = {}, untracked = {}, conflicts = {} }
   for _, e in ipairs(entries) do
+    if e.stash then
+      util.info("a stash is not staged: s applies it")
+      return
+    end
     table.insert(by_section[e.section], e)
   end
   self:unstage(by_section.staged)
@@ -650,6 +659,10 @@ function StatusView:action_unstage_all()
 end
 
 function StatusView:action_discard(ctx)
+  local s = self:stash_at(ctx)
+  if s then
+    return self:stash_drop(s)
+  end
   local entries = self:selected_entries(ctx)
   local restore, delete, skipped = {}, {}, 0
   for _, e in ipairs(entries) do
@@ -694,6 +707,234 @@ function StatusView:action_discard(ctx)
     end
   end
   vim.cmd("silent! checktime")
+end
+
+---------------------------------------------------------------------------
+-- Stashes
+---------------------------------------------------------------------------
+
+-- the sections with changes of the working tree (what can be stashed)
+local WORK = { staged = true, unstaged = true, untracked = true }
+
+--- The stash under the cursor in the file panel (its section or one of its files; a visual
+--- range: when all of it is in one stash), or of the file shown.
+function StatusView:stash_at(ctx)
+  if not self.files or ctx.buf ~= self.files.buf then
+    return self.current and self.current.stash
+  end
+  local line = api.nvim_win_get_cursor(0)[1]
+  local first, last = line, line
+  if ctx.range then
+    first, last = ctx.range[1], ctx.range[2]
+  end
+  local found
+  for l = first, last do
+    local item = self.files:item_at(l)
+    local s = item and item.section and item.section.stash
+    if not s or (found and s ~= found) then
+      return nil
+    end
+    found = s
+  end
+  return found
+end
+
+--- Paths among `paths` whose buffers have unsaved changes (stashing and applying change
+--- the files under them).
+function StatusView:unsaved(paths)
+  local out = {}
+  for _, p in ipairs(paths) do
+    local buf = util.find_buf(git.abspath(self.repo, p))
+    if buf and api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+      out[#out + 1] = p
+    end
+  end
+  return out
+end
+
+function StatusView:refuse_unsaved(paths)
+  local unsaved = self:unsaved(paths)
+  if #unsaved > 0 then
+    util.warn("unsaved changes in " .. table.concat(unsaved, ", ") .. ": save them first")
+    return true
+  end
+  return false
+end
+
+--- After stashing / applying: buffers and the view follow the files; buffers of files the
+--- stash took away go too (saving them would bring the files back).
+---@param gone? string[] paths that may no longer exist
+function StatusView:after_stash(res, done, gone)
+  if res.ok then
+    util.info(done or vim.trim(res.stdout or ""))
+  else
+    -- what git says, without the `git status` it prints after it
+    local lines = {}
+    for _, l in ipairs(vim.split(res.stdout or "", "\n", { trimempty = true })) do
+      if l:match("^On branch ") or l:match("^HEAD detached ") or l:match("^Not currently on any branch") then
+        break
+      end
+      lines[#lines + 1] = l
+    end
+    vim.list_extend(lines, vim.split(vim.trim(res.stderr or ""), "\n", { trimempty = true }))
+    util.warn(#lines > 0 and table.concat(lines, "\n") or vim.trim(res.stdout or ""))
+  end
+  vim.cmd("silent! checktime")
+  self:after_change()
+  for _, p in ipairs(gone or {}) do
+    local abs = git.abspath(self.repo, p)
+    local buf = util.find_buf(abs)
+    if buf and not vim.uv.fs_stat(abs) and #vim.fn.win_findbuf(buf) == 0 and not vim.bo[buf].modified then
+      pcall(api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
+--- `s`: stash (staged changes, the selected files, everything ...); on a stash: apply, pop or
+--- drop it.
+function StatusView:action_stash(ctx)
+  local s = self:stash_at(ctx)
+  if s then
+    return self:stash_menu(s)
+  end
+  local work, selected, files, renamed, untracked = {}, {}, {}, {}, false
+  for _, sec in ipairs(self.sections or {}) do
+    if WORK[sec.id] then
+      for _, e in ipairs(sec.entries) do
+        work[#work + 1] = e.path
+      end
+    end
+  end
+  if #work == 0 then
+    util.info("no local changes to stash")
+    return
+  end
+  if self.files and ctx.buf == self.files.buf then
+    for _, e in ipairs(self:selected_entries(ctx)) do
+      if WORK[e.section] then
+        selected[#selected + 1] = e.path
+        files[#files + 1] = e.path
+        -- a rename: both of its paths
+        if e.oldpath then
+          selected[#selected + 1] = e.oldpath
+          renamed[#renamed + 1] = e.oldpath
+        end
+        untracked = untracked or e.section == "untracked"
+      end
+    end
+  end
+  local staged = vim.iter(self.sections or {}):any(function(sec)
+    return sec.id == "staged" and #sec.entries > 0
+  end)
+  local choices = {}
+  if staged then
+    choices[#choices + 1] = { what = "staged", text = "Staged changes" }
+  end
+  if #selected > 0 then
+    choices[#choices + 1] = {
+      what = "paths",
+      text = #files == 1 and ("This file: " .. files[1]) or ("These %d files"):format(#files),
+    }
+  end
+  choices[#choices + 1] = { what = "all", text = "All changes" }
+  choices[#choices + 1] = { what = "untracked", text = "All changes and untracked files" }
+  if staged then
+    choices[#choices + 1] = { what = "keep_index", text = "All changes, keeping the staged ones in place" }
+  end
+  vim.ui.select(choices, {
+    prompt = "Stash",
+    format_item = function(c)
+      return c.text
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+    if self:refuse_unsaved(choice.what == "paths" and selected or work) then
+      return
+    end
+    util.after_select(function()
+      vim.ui.input({ prompt = "Stash message (empty: git's own): " }, function(message)
+        if message == nil then
+          return
+        end
+        if choice.what == "staged" then
+          self:after_stash(stash.push_staged(self.repo, message), nil, work)
+        else
+          if choice.what == "paths" and #renamed > 0 then
+            -- git stashes only paths the index knows: the old path of a rename goes back in
+            -- (deleted, unstaged)
+            self:git(vim.list_extend({ "reset", "-q", "--" }, literal(renamed)), "git reset")
+          end
+          self:after_stash(stash.push(self.repo, choice.what, message, selected, untracked), nil, work)
+        end
+      end)
+    end)
+  end)
+end
+
+function StatusView:stash_menu(s)
+  local choices = {
+    { act = "apply", text = "Apply" },
+    { act = "pop", text = "Pop: apply and drop" },
+    { act = "drop", text = "Drop" },
+  }
+  vim.ui.select(choices, {
+    prompt = s.ref .. ": " .. s.subject,
+    format_item = function(c)
+      return c.text
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    elseif choice.act == "drop" then
+      self:stash_drop(s)
+    else
+      self:stash_apply(s, choice.act == "pop")
+    end
+  end)
+end
+
+--- Applies a stash, its staged part staged again (--index); if that part conflicts, it can go
+--- in as unstaged changes. Conflicts of the working tree part show under Conflicts.
+function StatusView:stash_apply(s, pop)
+  local ref = stash.ref(self.repo, s.sha)
+  if not ref then
+    util.warn("the stash is gone")
+    return self:refresh()
+  end
+  if self:refuse_unsaved(stash.paths(self.repo, s.sha)) then
+    return
+  end
+  local verb = pop and "pop" or "apply"
+  local res = git.run(self.repo, { "stash", verb, "--index", ref })
+  if not res.ok and (res.stderr .. res.stdout):lower():find("conflicts in index", 1, true) then
+    local again = vim.fn.confirm(
+      ("The staged part of %s conflicts with the index. Apply it as unstaged changes?"):format(ref),
+      "&Yes\n&No",
+      2
+    )
+    if again ~= 1 then
+      return
+    end
+    res = git.run(self.repo, { "stash", verb, ref })
+  end
+  self:after_stash(res, res.ok and ((pop and "popped " or "applied ") .. ref) or nil)
+end
+
+function StatusView:stash_drop(s)
+  local ref = stash.ref(self.repo, s.sha)
+  if not ref then
+    util.warn("the stash is gone")
+    return self:refresh()
+  end
+  if vim.fn.confirm(("Drop %s: %s?"):format(ref, s.subject), "&Yes\n&No", 2) ~= 1 then
+    return
+  end
+  if self:git({ "stash", "drop", "-q", ref }, "git stash drop") then
+    util.info("dropped " .. ref)
+  end
+  self:refresh()
 end
 
 ---------------------------------------------------------------------------
@@ -803,6 +1044,10 @@ end
 --- shows, the cursor (or visual) lines and the file's versions, loaded on demand.
 function StatusView:change_context(ctx, mode, verb)
   local entry = self.current
+  if entry and entry.stash then
+    util.info("a stash is read-only: s in the file panel applies it")
+    return nil
+  end
   local frame = entry and self:staging_frame(entry)
   local role = self.layout:role_of(ctx.win)
   if not frame or not role or not self:can_stage_parts(entry, verb) then

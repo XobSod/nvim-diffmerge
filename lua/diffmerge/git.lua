@@ -58,13 +58,13 @@ end
 --- Runs git synchronously.
 ---@param repo diffmerge.Repo|string|nil repo or cwd
 ---@param args string[]
----@param opts? { stdin?: string, timeout?: integer }
+---@param opts? { stdin?: string, timeout?: integer, env?: table<string, string> }
 ---@return diffmerge.RunResult
 function M.run(repo, args, opts)
   opts = opts or {}
   local ok, obj = pcall(vim.system, build_cmd(args), {
     cwd = cwd_of(repo),
-    env = env,
+    env = opts.env and vim.tbl_extend("force", env, opts.env) or env,
     stdin = opts.stdin,
     text = false,
   })

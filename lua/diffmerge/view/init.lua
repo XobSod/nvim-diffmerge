@@ -162,10 +162,11 @@ function View:set_sections(data, opts)
       end
     end
     if not match then
-      -- same path in another section (e.g. staged completely)
+      -- same path in another section (e.g. staged completely), not in a stash unless the
+      -- file shown was a stash's
       for _, s in ipairs(data.sections) do
         for _, e in ipairs(s.entries) do
-          if not match and e.path == previous.path then
+          if not match and e.path == previous.path and (not e.stash or previous.stash) then
             match = e
           end
         end
@@ -681,7 +682,7 @@ function View:action_expand(ctx)
   end
   if item.kind == "file" then
     self:show_entry(item.entry, { focus = true })
-  elseif (item.kind == "dir" and self.files.collapsed[item.key]) or (item.kind == "section" and self.files.collapsed[item.section.id]) then
+  elseif (item.kind == "dir" and self.files.collapsed[item.key]) or (item.kind == "section" and self.files:is_collapsed(item.section)) then
     self.files:toggle_collapse(item)
   end
 end
@@ -695,7 +696,7 @@ function View:action_collapse(ctx)
     self.files:toggle_collapse(item)
     return
   end
-  if item.kind == "section" and not self.files.collapsed[item.section.id] then
+  if item.kind == "section" and not self.files:is_collapsed(item.section) then
     self.files:toggle_collapse(item)
     return
   end

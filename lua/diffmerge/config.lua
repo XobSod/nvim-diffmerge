@@ -91,6 +91,7 @@ M.defaults = {
       ["S"] = "stage_all",
       ["U"] = "unstage_all",
       ["X"] = "discard",
+      ["s"] = "stash",
       ["<leader>1"] = "take_local_file",
       ["<leader>3"] = "take_remote_file",
       ["i"] = "toggle_tree",

@@ -8,6 +8,7 @@ CONTENTS                                                   *diffmerge-contents*
   3. Commands ................................... |diffmerge-commands|
   4. Views ...................................... |diffmerge-views|
      Status ..................................... |diffmerge-status|
+     Stashes .................................... |diffmerge-stash|
      Diff ....................................... |diffmerge-diff|
      Log / history .............................. |diffmerge-log|
      Merge ...................................... |diffmerge-merge|
@@ -204,6 +205,34 @@ and unstage in Staged.
 The view refreshes when files are written, when Neovim gets focus and when the
 git directory changes (e.g. lazygit or a terminal).
 
+STASHES                                                     *diffmerge-stash*
+
+`s` in the file panel stashes, from a menu:
+
+  Staged changes          what you staged (lines, hunks, files) goes, the
+                          rest stays (`git stash push --staged`)
+  This file / These files the files under the cursor or selection
+  All changes             `git stash push`
+  ... and untracked files `--include-untracked`
+  ..., keeping the staged ones in place
+                          `--keep-index`: to try out what you are about to
+                          commit
+
+It asks for a message; empty, git writes its own ("WIP on <branch>: ...").
+Files with unsaved changes have to be saved first. Staged and unstaged
+changes on neighbouring lines of a file can be stashed apart (git itself
+cannot do that with `--staged`); on the same lines they cannot, and nothing
+happens.
+
+Stashes are listed below the changes, one folded section each
+(`stash@{0}  On master: message`); `l` / `<CR>` unfold one. A stashed file
+opens like a change, read-only: STASH BASE (the commit it was made on) |
+STASHED WORKING TREE | STASHED INDEX, only the columns that differ. On a
+stash or its files, `s` offers apply (the staged part staged again), pop
+(apply and drop) and drop; `X` drops it (asks first). An apply that
+conflicts shows the files under Conflicts; git does not apply a stash to
+files with changes of their own.
+
 ------------------------------------------------------------------------------
 DIFF                                                           *diffmerge-diff*
 
@@ -371,6 +400,7 @@ merge                        file_panel                log_panel
   ]x / [x   next/prev_conflict S       stage_all         P     cycle_parent
   ]c / [c   next/prev_chunk    U       unstage_all       K     commit_details
                                X       discard           Y     yank_hash
+                               s       stash
                                <leader>1 take_local_file F     toggle_first_parent
                                <leader>3 take_remote_file
                                i       toggle_tree       a     toggle_all_branches

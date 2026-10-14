@@ -8,6 +8,9 @@ dependencies, Neovim 0.12+.
   under the cursor between unstaged and staged (lazygit style), `-` the hunk, visual mode the
   selection — the change stays in view and changes colour; `X` discards it. Opened from a file,
   it shows that file at the cursor's line.
+- **Stashing what you staged** — `s` stashes the staged lines and hunks only (also next to
+  unstaged changes, where `git stash --staged` fails), files, or everything; stashes are listed
+  below the changes and open like changes, read-only; apply, pop, drop.
 - **Changed characters** are highlighted in merges and in the three columns too (following
   `'diffopt'` `inline:`), where Vim's own colours would compare every window with every other.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.

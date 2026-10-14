@@ -28,7 +28,8 @@ M.descriptions = {
   toggle_stage = "Stage / unstage (file, directory, section)",
   stage_all = "Stage everything",
   unstage_all = "Unstage everything",
-  discard = "Discard changes (confirm)",
+  discard = "Discard changes (confirm); on a stash: drop it",
+  stash = "Stash staged changes / files / everything; on a stash: apply, pop, drop",
   take_local_file = "Conflict: take LOCAL (ours) for the whole file",
   take_remote_file = "Conflict: take REMOTE (theirs) for the whole file",
   toggle_tree = "Toggle tree / list",
@@ -52,6 +53,7 @@ M.visual = {
   discard_change = true,
   select = true,
   toggle_stage = true,
+  stash = true,
 }
 
 ---@type table<integer, { mode: string, lhs: string, saved?: table, desc: string }[]>

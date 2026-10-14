@@ -114,6 +114,22 @@ function M.extend(dst, src)
   return dst
 end
 
+--- Runs `fn` once a vim.ui.select menu is gone. Pickers that run in a terminal (fzf-lua) call
+--- back while it closes, and closing it leaves insert mode: a prompt opened from the callback
+--- would start in normal mode.
+function M.after_select(fn)
+  local tries = 0
+  local function check()
+    tries = tries + 1
+    if (vim.fn.mode() ~= "t" and vim.bo.buftype ~= "terminal") or tries > 50 then
+      fn()
+    else
+      vim.defer_fn(check, 10)
+    end
+  end
+  vim.schedule(check)
+end
+
 function M.read_file(path)
   local f = io.open(path, "rb")
   if not f then

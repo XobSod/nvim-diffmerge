@@ -169,13 +169,25 @@ function Panel:ordered_entries(section)
   return out
 end
 
---- All entries in display order (for ]f / [f), skipping collapsed sections/dirs is not needed.
+--- All entries in display order (for ]f / [f): the changes, not what folded sections (stashes)
+--- keep aside.
 function Panel:all_entries()
   local out = {}
   for _, s in ipairs(self.sections) do
-    util.extend(out, self:ordered_entries(s))
+    if not s.folded then
+      util.extend(out, self:ordered_entries(s))
+    end
   end
   return out
+end
+
+--- A section is collapsed when folded by the user, or folded from the start (`folded`).
+function Panel:is_collapsed(section)
+  local c = self.collapsed[section.id]
+  if c == nil then
+    return section.folded == true
+  end
+  return c
 end
 
 function Panel:render()
@@ -196,7 +208,9 @@ function Panel:render()
   end
   local total = 0
   for _, s in ipairs(self.sections) do
-    total = total + #s.entries
+    if not s.folded then
+      total = total + #s.entries
+    end
   end
   if total == 0 then
     add("", { kind = "blank" })
@@ -270,7 +284,7 @@ function Panel:render()
   for _, section in ipairs(self.sections) do
     if #section.entries > 0 or section.always then
       add("", { kind = "blank" })
-      local collapsed = self.collapsed[section.id]
+      local collapsed = self:is_collapsed(section)
       local exp = collapsed and config.options.icons.expander_closed or config.options.icons.expander_open
       local head = (" %s %s"):format(exp, section.title)
       local count = (" %d"):format(#section.entries)
@@ -351,8 +365,8 @@ function Panel:reveal(entry)
   for _, s in ipairs(self.sections) do
     for _, e in ipairs(s.entries) do
       if e == entry then
-        if self.collapsed[s.id] then
-          self.collapsed[s.id] = nil
+        if self:is_collapsed(s) then
+          self.collapsed[s.id] = false
           changed = true
         end
         local dir = util.dirname(e.path)
@@ -401,7 +415,7 @@ end
 
 function Panel:toggle_collapse(item)
   if item.kind == "section" then
-    self.collapsed[item.section.id] = not self.collapsed[item.section.id] or nil
+    self.collapsed[item.section.id] = not self:is_collapsed(item.section)
   elseif item.kind == "dir" then
     self.collapsed[item.key] = not self.collapsed[item.key] or nil
   end

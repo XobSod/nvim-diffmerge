@@ -116,6 +116,25 @@ H.describe("merge.locate", function()
     loc = merge.locate(ranges, result, { "x", "a", "b" })
     H.eq({ loc[1][1], loc[1][2], loc[1].touched }, { 2, 2, false })
   end)
+  H.it("apart: neighbouring changes stay apart, either side", function()
+    local function merged(b, l, r)
+      local chunks = diff3.compute(b, l, r, { apart = true })
+      for _, c in ipairs(chunks) do
+        if c.kind == "conflict" then
+          return "conflict"
+        end
+      end
+      return table.concat(diff3.result(chunks, b, l, r), " ")
+    end
+    H.eq(merged({ "1", "P", "80", "4" }, { "1", "P", "8080", "4" }, { "1", "app", "80", "4" }), "1 app 8080 4")
+    H.eq(merged({ "1", "4" }, { "1", "x", "4" }, { "1", "FOUR" }), "1 x FOUR")
+    H.eq(merged({ "1", "4" }, { "1", "FOUR" }, { "1", "x", "4" }), "1 x FOUR")
+    H.eq(merged({ "a", "b", "c", "d" }, { "a", "b", "C", "d" }, { "a", "c", "d" }), "a C d")
+    H.eq(merged({ "a", "b", "c", "d" }, { "a", "c", "d" }, { "a", "b", "C", "d" }), "a C d")
+    H.eq(merged({ "1", "P", "4" }, { "1", "Q", "4" }, { "1", "app", "4" }), "conflict")
+    H.eq(merged({ "1", "4" }, { "1", "x", "4" }, { "1", "y", "4" }), "conflict")
+    H.eq(merged({ "1", "2", "3", "4" }, { "1", "X", "Y", "4" }, { "1", "2", "n", "3", "4" }), "conflict")
+  end)
 end)
 
 H.done()

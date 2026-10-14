@@ -63,7 +63,7 @@ end
 ---@param loc string[]
 ---@param rem string[]
 ---@return diffmerge.Chunk[]
----@param opts? { algorithm?: string, indent_heuristic?: boolean, d1?: table, d2?: table } d1 / d2: hunks (M.hunks) of base -> loc / rem
+---@param opts? { algorithm?: string, indent_heuristic?: boolean, d1?: table, d2?: table, apart?: boolean } d1 / d2: hunks (M.hunks) of base -> loc / rem; apart: changes on neighbouring lines stay apart (only overlapping ones, or insertions at one place, are a group)
 function M.compute(base, loc, rem, opts)
   opts = opts or {}
   local d1 = opts.d1 or hunks(base, loc, opts.algorithm, opts.indent_heuristic)
@@ -93,15 +93,35 @@ function M.compute(base, loc, rem, opts)
     else
       gs = h2.bs
     end
+    -- apart: an insertion goes before a change at the same line
+    local insertion_first = opts.apart
+      and h1
+      and h2
+      and h1.bs == h2.bs
+      and (h1.be == h1.bs) ~= (h2.be == h2.bs)
     push_equal(gs)
     local ge = gs
     local delta1, delta2 = 0, 0
     local n1, n2 = 0, 0
+    local function joins(h)
+      if not h then
+        return false
+      elseif not opts.apart then
+        return h.bs <= ge
+      elseif n1 + n2 == 0 then
+        return h.bs == gs and (not insertion_first or h.be == h.bs)
+      elseif h.be > h.bs then
+        -- a change: when it overlaps what the group changes
+        return h.bs < ge
+      end
+      -- an insertion: inside a change, or where the group inserts too
+      return (h.bs > gs and h.bs < ge) or (gs == ge and h.bs == ge)
+    end
     local progressed = true
     while progressed do
       progressed = false
       local a = d1[i]
-      if a and a.bs <= ge then
+      if joins(a) then
         ge = math.max(ge, a.be)
         delta1 = delta1 + (a.oe - a.os) - (a.be - a.bs)
         n1 = n1 + 1
@@ -109,7 +129,7 @@ function M.compute(base, loc, rem, opts)
         progressed = true
       end
       local b = d2[j]
-      if b and b.bs <= ge then
+      if joins(b) then
         ge = math.max(ge, b.be)
         delta2 = delta2 + (b.oe - b.os) - (b.be - b.bs)
         n2 = n2 + 1

@@ -224,6 +224,7 @@ end
 ---@param opts? { startup?: boolean }
 function M.open_difftool(left, right, name, opts)
   opts = opts or {}
+  git.absolute_work_tree()
   left = vim.fs.normalize(vim.fn.fnamemodify(left, ":p"))
   right = vim.fs.normalize(vim.fn.fnamemodify(right, ":p"))
   local repo = git.find_repo(name and name ~= "" and name or vim.fn.getcwd())

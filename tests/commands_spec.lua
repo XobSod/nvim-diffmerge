@@ -455,6 +455,23 @@ H.describe(":DiffMerge compare", function()
     H.eq(res.stdout, vim.inspect({ { "a", "b" }, { "a", "c" } }, { newline = "" }), res.stderr)
   end)
 
+  H.it("git difftool of a file in a subdirectory finds the repository", function()
+    local dir = H.repo({ ["src/f.txt"] = { "a" } })
+    H.write(dir, "src/f.txt", { "b" })
+    H.write(dir, "old.txt", { "a" })
+    -- as git runs the tool: from the top, GIT_DIR set, GIT_WORK_TREE relative
+    local saved = { vim.env.GIT_DIR, vim.env.GIT_WORK_TREE }
+    vim.env.GIT_DIR, vim.env.GIT_WORK_TREE = dir .. "/.git", "."
+    local ok, err = pcall(function()
+      vim.cmd.cd(dir)
+      vim.cmd("DiffMerge difftool old.txt src/f.txt src/f.txt")
+      H.eq(view().repo.root, dir)
+      H.eq(vim.env.GIT_WORK_TREE, dir)
+    end)
+    vim.env.GIT_DIR, vim.env.GIT_WORK_TREE = saved[1], saved[2]
+    assert(ok, err)
+  end)
+
   H.it("git difftool keeps git's labels and title", function()
     local dir = H.tmpdir()
     H.write(dir, "l/f.txt", { "1" })

@@ -208,6 +208,15 @@ end
 
 local repos = {}
 
+--- git runs its difftool from the top of the work tree with GIT_DIR and a relative
+--- GIT_WORK_TREE ("."): made absolute, it holds for git calls in any directory.
+function M.absolute_work_tree()
+  local wt = vim.env.GIT_WORK_TREE
+  if wt and wt ~= "" and vim.fn.isabsolutepath(wt) == 0 then
+    vim.env.GIT_WORK_TREE = vim.fs.normalize(vim.fn.fnamemodify(wt, ":p"))
+  end
+end
+
 --- Finds the repository containing `path` (file or directory, default: cwd).
 ---@return diffmerge.Repo|nil, string|nil
 function M.find_repo(path)

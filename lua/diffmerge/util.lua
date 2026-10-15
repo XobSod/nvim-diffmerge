@@ -153,6 +153,25 @@ function M.shell_words(s)
   return words
 end
 
+--- Buffers of the files `paths` (relative to `root`) that a stash or a branch switch took
+--- away: when the file is gone, the buffer unmodified and not shown in a window, it goes too
+--- (saving it would bring the file back).
+function M.drop_gone_buffers(root, paths)
+  for _, p in ipairs(paths or {}) do
+    local abs = vim.fs.joinpath(root, p)
+    local buf = M.find_buf(abs)
+    if
+      buf
+      and vim.api.nvim_buf_is_loaded(buf)
+      and not vim.uv.fs_stat(abs)
+      and not vim.bo[buf].modified
+      and #vim.fn.win_findbuf(buf) == 0
+    then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
 --- Runs `fn` once a vim.ui.select menu is gone. Pickers that run in a terminal (fzf-lua) call
 --- back while it closes, and closing it leaves insert mode: a prompt opened from the callback
 --- would start in normal mode.

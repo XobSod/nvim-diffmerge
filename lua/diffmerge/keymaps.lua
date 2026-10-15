@@ -36,6 +36,7 @@ M.descriptions = {
   fetch = "git fetch",
   pull = "git pull (your git config decides how)",
   push = "git push (no upstream: set it; rejected: --force-with-lease, asked)",
+  branch = "Switch branch (git switch; a new branch; changes in the way: stash, switch, pop)",
   take_local_file = "Conflict: take LOCAL (ours) for the whole file",
   take_remote_file = "Conflict: take REMOTE (theirs) for the whole file",
   toggle_tree = "Toggle tree / list",

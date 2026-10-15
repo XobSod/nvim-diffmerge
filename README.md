@@ -15,6 +15,8 @@ dependencies, Neovim 0.12+.
   merge message), the message in a window below, `:wq` commits, `:q!` aborts.
 - **Fetch / pull / push** — `F` / `p` / `P` in the background; pull follows your git config;
   push offers to set an upstream and, when rejected, `--force-with-lease` (never `--force`).
+- **Branches** — `b` switches (`git switch`) from a picker of local and remote branches, or to a
+  new one; uncommitted changes in the way go along (stash, switch, pop).
 - **Changed characters** are highlighted in merges and in the three columns too (following
   `'diffopt'` `inline:`), where Vim's own colours would compare every window with every other.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.

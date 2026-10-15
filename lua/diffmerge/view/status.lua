@@ -802,6 +802,13 @@ function StatusView:action_push()
   end)
 end
 
+--- `b`: switch branches (a picker of local and remote branches, or a new one).
+function StatusView:action_branch()
+  require("diffmerge.branch").pick(self.repo, function()
+    views.refresh_repo(self.repo, { log = true })
+  end)
+end
+
 ---------------------------------------------------------------------------
 -- Stashes
 ---------------------------------------------------------------------------
@@ -855,8 +862,8 @@ function StatusView:refuse_unsaved(paths)
 end
 
 --- After stashing / applying: buffers and the view follow the files; buffers of files the
---- stash took away go too (saving them would bring the files back).
----@param gone? string[] paths that may no longer exist
+--- stash took away (`gone`: what it stashed) go too (saving them would bring the files back).
+---@param gone? string[]
 function StatusView:after_stash(res, done, gone)
   if res.ok then
     util.info(done or vim.trim(res.stdout or ""))
@@ -874,13 +881,7 @@ function StatusView:after_stash(res, done, gone)
   end
   vim.cmd("silent! checktime")
   self:after_change()
-  for _, p in ipairs(gone or {}) do
-    local abs = git.abspath(self.repo, p)
-    local buf = util.find_buf(abs)
-    if buf and not vim.uv.fs_stat(abs) and #vim.fn.win_findbuf(buf) == 0 and not vim.bo[buf].modified then
-      pcall(api.nvim_buf_delete, buf, { force = true })
-    end
-  end
+  util.drop_gone_buffers(self.repo.root, gone)
 end
 
 --- `s`: stash (staged changes, the selected files, everything ...); on a stash: apply, pop or

@@ -1,6 +1,6 @@
---- Fetch, pull, push: git's own, in the background, one at a time per repository. While one
---- runs, starting another offers to stop it (git and its hooks, a process group of their own);
---- quitting Neovim waits for them a while.
+--- git operations in the background (fetch, pull, push; switch and its stash steps), one at a
+--- time per repository. While one runs, starting another offers to stop it (git and its hooks,
+--- a process group of their own); quitting Neovim waits for them a while.
 local git = require("diffmerge.git")
 local util = require("diffmerge.util")
 
@@ -9,7 +9,7 @@ local M = {}
 
 M.kinds = { fetch = true, pull = true, push = true }
 
--- by git dir: { what = "fetch" | "pull" | "push", proc, stopped }
+-- by git dir: { what = what the user started ("fetch", "pull", "push", "switch"), proc, stopped }
 local running = {}
 -- branches whose upstream you did not want set after a push (this session)
 local untracked_ok = {}
@@ -72,18 +72,19 @@ function M.tracking(repo)
   return table.concat(parts, " ") .. " " .. upstream
 end
 
---- What is running in the repository: "fetch", "pull", "push" or nil.
+--- What is running in the repository: "fetch", "pull", "push", "switch" or nil.
 function M.running(repo)
   local r = running[repo.gitdir]
   return r and r.what
 end
 
-local function report(repo, res, what, done, extra)
+---@param plain? boolean without where the branch stands (switching, stashing)
+local function report(repo, res, what, done, extra, plain)
   if res.stopped then
     return
   end
   local text = shown(lines_of(res), not res.ok)
-  local where = M.tracking(repo)
+  local where = not plain and M.tracking(repo) or nil
   local parts = vim.tbl_filter(function(p)
     return p and p ~= ""
   end, { text, extra, where })
@@ -127,28 +128,33 @@ local function changed_files(repo)
   return git.output(repo, { "status", "--porcelain", "--untracked-files=no" }) or ""
 end
 
---- After a stopped pull: what it left (`before`: the changed files when it started).
-local function after_stop(repo, before)
+--- After a stopped pull or switch: what it left (`before`: the changed files when it started).
+local function after_stop(repo, what, before)
   local op = git.operation(repo)
   if op then
-    util.warn(("git pull stopped in the middle of a %s: git %s --abort undoes it"):format(op.kind, op.kind))
+    util.warn(("git %s stopped in the middle of a %s: git %s --abort undoes it"):format(what, op.kind, op.kind))
   elseif changed_files(repo) ~= before then
-    util.warn("git pull stopped: files may be half updated (the status view shows them)")
+    util.warn(("git %s stopped: files may be half updated (the status view shows them)"):format(what))
   else
-    util.info("git pull stopped")
+    util.info(("git %s stopped"):format(what))
   end
 end
 
+-- operations that change the work tree: stopping them can leave it half updated
+local CHANGES_FILES = { pull = true, switch = true }
+
 --- Runs `git <what> <args>`; `on_done(res)` when git is finished.
-local function run(repo, what, args, on_done)
+---@param opts? { as?: string, quiet?: boolean } as: the operation it is a step of (shown, stopped as that); quiet: no "running" notice
+local function run(repo, what, args, on_done, opts)
+  opts = opts or {}
   local busy = running[repo.gitdir]
   if busy then
     if leaving then
       return
     end
     local question = ("git %s is still running. Stop it?"):format(busy.what)
-    if busy.what == "pull" then
-      question = "git pull is still running. Stopping it can leave files half updated. Stop it?"
+    if CHANGES_FILES[busy.what] then
+      question = ("git %s is still running. Stopping it can leave files half updated. Stop it?"):format(busy.what)
     end
     if vim.fn.confirm(question, "&Yes\n&No", 2) == 1 then
       busy.stopped = true
@@ -156,27 +162,44 @@ local function run(repo, what, args, on_done)
     end
     return
   end
-  local this = { what = what, files = what == "pull" and changed_files(repo) or nil }
+  local shown_as = opts.as or what
+  local this = { what = shown_as, files = CHANGES_FILES[shown_as] and changed_files(repo) or nil }
   running[repo.gitdir] = this
   wait_on_leave()
   this.proc = git.run_async(repo, vim.list_extend({ what }, args), { detach = true }, function(res)
     running[repo.gitdir] = nil
     if this.stopped then
-      res.stopped = true
-      if what == "pull" then
-        after_stop(repo, this.files)
+      res.stopped, res.ok = true, false
+      if CHANGES_FILES[shown_as] then
+        after_stop(repo, shown_as, this.files)
       else
-        util.info("git " .. what .. " stopped")
+        util.info("git " .. shown_as .. " stopped")
       end
     end
     on_done(res)
   end)
   -- most of them are done by then: a word only when it takes a while
   vim.defer_fn(function()
-    if running[repo.gitdir] == this and not leaving then
-      util.info(("git %s is running … (F, p or P stops it)"):format(what))
+    if running[repo.gitdir] == this and not leaving and not opts.quiet then
+      util.info(("git %s is running … (F, p, P or b stops it)"):format(shown_as))
     end
   end, 3000)
+end
+
+--- `git <what> <args>` in the background, one at a time per repository (see the top).
+M.run = run
+M.report = report
+
+--- Files of the repository with unsaved changes in their buffers.
+function M.unsaved(repo)
+  local out = {}
+  for _, buf in ipairs(api.nvim_list_bufs()) do
+    local name = api.nvim_buf_get_name(buf)
+    if vim.bo[buf].modified and vim.bo[buf].buftype == "" and vim.startswith(name, repo.root .. "/") then
+      out[#out + 1] = git.relpath(repo, name)
+    end
+  end
+  return out
 end
 
 ---@param on_done? fun(res: diffmerge.RunResult)
@@ -206,13 +229,7 @@ function M.pull(repo, args, on_done)
     util.warn("a commit is running: finish it first (:wq commits, :q! aborts)")
     return
   end
-  local unsaved = {}
-  for _, buf in ipairs(api.nvim_list_bufs()) do
-    local name = api.nvim_buf_get_name(buf)
-    if vim.bo[buf].modified and vim.bo[buf].buftype == "" and vim.startswith(name, repo.root .. "/") then
-      unsaved[#unsaved + 1] = git.relpath(repo, name)
-    end
-  end
+  local unsaved = M.unsaved(repo)
   if #unsaved > 0 then
     util.warn("unsaved changes in " .. table.concat(unsaved, ", ") .. ": save them first")
     return
@@ -281,7 +298,9 @@ function M.push(repo, args, on_done)
   end)
   run(repo, "push", args, function(res)
     local text = (res.stdout or "") .. "\n" .. (res.stderr or "")
-    local branch = git.line(repo, { "symbolic-ref", "--short", "-q", "HEAD" })
+    -- (its whole name: --short would say heads/x next to a tag x)
+    local ref = git.line(repo, { "symbolic-ref", "-q", "HEAD" })
+    local branch = ref and ref:gsub("^refs/heads/", "")
     if res.stopped then
       return finish(res)
     end

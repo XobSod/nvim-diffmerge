@@ -11,6 +11,7 @@ CONTENTS                                                   *diffmerge-contents*
      Stashes .................................... |diffmerge-stash|
      Committing ................................. |diffmerge-commit|
      Fetch / pull / push ........................ |diffmerge-remote|
+     Branches ................................... |diffmerge-branches|
      Diff ....................................... |diffmerge-diff|
      Log / history .............................. |diffmerge-log|
      Merge ...................................... |diffmerge-merge|
@@ -105,6 +106,10 @@ With lazy.nvim: >lua
                           alias dmdiff='nvim -c "DiffMerge compare" --'
                           dmdiff old.txt new.txt
 <
+:DiffMerge switch [args]
+                        `git switch [args]`; without args a picker of the
+                        branches (|diffmerge-branches|).
+
 :DiffMerge fetch [args]
 :DiffMerge pull [args]
 :DiffMerge push [args]  git fetch / pull / push in the background
@@ -288,6 +293,26 @@ log view keeps what you marked (`R` reloads it).
             overwrites the remote only if it is still what was fetched last;
             never `--force`.
 
+BRANCHES                                                  *diffmerge-branches*
+
+`b` in the file panel switches branches (`git switch`), from a picker
+(|vim.ui.select|): your local branches, most recent first, with how far ahead
+/ behind their upstream branches are, the current one marked `*`; the remote
+branches that have no local branch yet (picking one makes a local branch
+tracking it); and a new branch from here (it asks for the name). `:DiffMerge
+switch [args]` runs `git switch` with any arguments; without them it opens
+the picker.
+
+It runs like fetch / pull / push (in the background, one at a time; `b`
+while another one runs offers to stop it), not during a merge, rebase or
+commit; files with unsaved changes have to be saved first. When uncommitted
+changes are in the way, it offers to stash them, switch, and bring them back
+there (staged changes staged again when they fit the index there, else as
+unstaged changes); only that stash is taken back, never another. Changes that
+do not apply cleanly there show under Conflicts; the stash ("DiffMerge:
+switching to ...") stays until you drop it. Untracked files in the way (the
+branch has files of its own there) are named: move them away first.
+
 ------------------------------------------------------------------------------
 DIFF                                                           *diffmerge-diff*
 
@@ -462,6 +487,7 @@ merge                        file_panel                log_panel
                                F       fetch
                                p       pull
                                P       push
+                               b       branch
                                <leader>1 take_local_file F     toggle_first_parent
                                <leader>3 take_remote_file
                                i       toggle_tree       a     toggle_all_branches
@@ -539,6 +565,7 @@ Conflict colours are blended from the Normal background.
     dm.compare(left, right)
     dm.commit({ "--amend" })
     dm.remote("push", { "--tags" })   -- "fetch" | "pull" | "push"
+    dm.switch({ "topic" })            -- no args: the picker
     dm.mergetool(local_, base, remote, merged)
     dm.current()   -- view of the current tab
     dm.close()

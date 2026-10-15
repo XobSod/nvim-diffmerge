@@ -98,6 +98,7 @@ M.defaults = {
       ["F"] = "fetch",
       ["p"] = "pull",
       ["P"] = "push",
+      ["b"] = "branch",
       ["<leader>1"] = "take_local_file",
       ["<leader>3"] = "take_remote_file",
       ["i"] = "toggle_tree",

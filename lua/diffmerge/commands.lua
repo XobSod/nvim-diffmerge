@@ -145,6 +145,12 @@ M.subcommands = {
   end,
 }
 
+M.subcommands.switch = function(_, cmd)
+  local words = util.shell_words(cmd.args or "")
+  table.remove(words, 1)
+  dm().switch(words)
+end
+
 for _, what in ipairs({ "fetch", "pull", "push" }) do
   M.subcommands[what] = function(_, cmd)
     -- quoted as in a shell
@@ -195,6 +201,21 @@ function M.complete(arglead, cmdline, _)
     return filter(names, arglead)
   end
   local sub = words[2]
+  if sub == "switch" then
+    local git = require("diffmerge.git")
+    local repo = git.find_repo()
+    local names = repo
+        and vim.split(
+          git.output(repo, { "for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads", "refs/remotes" }) or "",
+          "\n",
+          { trimempty = true }
+        )
+      or {}
+    names = vim.tbl_filter(function(n)
+      return not n:match("/HEAD$")
+    end, names)
+    return filter(vim.list_extend({ "-c", "--track", "--detach", "--discard-changes" }, names), arglead)
+  end
   if sub == "fetch" or sub == "pull" or sub == "push" then
     local remotes = vim.split(require("diffmerge.git").output(require("diffmerge.git").find_repo() or nil, { "remote" }) or "", "\n", { trimempty = true })
     local options = {

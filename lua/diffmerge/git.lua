@@ -73,7 +73,8 @@ function M.run(repo, args, opts)
   end
   local res = obj:wait(opts.timeout or 30000)
   return {
-    ok = res.code == 0,
+    -- (a git ended by a signal reports 0)
+    ok = res.code == 0 and (res.signal or 0) == 0,
     code = res.code,
     stdout = res.stdout or "",
     stderr = res.stderr or "",
@@ -94,7 +95,13 @@ function M.run_async(repo, args, opts, cb)
     text = false,
   }, function(res)
     vim.schedule(function()
-      cb({ ok = res.code == 0, code = res.code, stdout = res.stdout or "", stderr = res.stderr or "" })
+      cb({
+        ok = res.code == 0 and (res.signal or 0) == 0,
+        code = res.code,
+        signal = res.signal,
+        stdout = res.stdout or "",
+        stderr = res.stderr or "",
+      })
     end)
   end)
   if not ok then

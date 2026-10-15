@@ -153,6 +153,24 @@ function M.remote(what, args)
   end)
 end
 
+--- `git switch <args>`; without args a picker of the branches. The views follow.
+---@param args? string[]
+function M.switch(args)
+  M.ensure_setup()
+  local repo = repo_for()
+  if not repo then
+    return
+  end
+  local function done()
+    require("diffmerge.view").refresh_repo(repo, { log = true })
+  end
+  if args and #args > 0 then
+    require("diffmerge.branch").switch(repo, args, done)
+  else
+    require("diffmerge.branch").pick(repo, done)
+  end
+end
+
 --- `git mergetool` entry point.
 function M.mergetool(local_path, base_path, remote_path, merged_path, opts)
   M.ensure_setup()

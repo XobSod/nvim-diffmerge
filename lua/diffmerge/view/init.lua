@@ -107,13 +107,15 @@ function View:attach_files_panel()
 end
 
 --- The status and diff views of `repo` show it anew (after a commit, fetch, pull, push); log
---- views keep what you marked there (R reloads them).
-function M.refresh_repo(repo)
+--- views keep what you marked there (R reloads them), unless HEAD went to another branch
+--- (`opts.log`: its history is another).
+---@param opts? { log?: boolean }
+function M.refresh_repo(repo, opts)
   for _, view in pairs(M.views) do
     if view.repo and view.repo.root == repo.root and not view.cleaned and view.layout:is_valid() then
       if view.kind_name == "status" then
         view:after_change()
-      elseif view.kind_name == "diff" then
+      elseif view.kind_name == "diff" or (opts and opts.log and view.log) then
         view:refresh()
       end
     end

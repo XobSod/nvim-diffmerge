@@ -62,10 +62,12 @@ function M.open(repo, opts)
   end
   if opts.conflicts then
     self:show_first_conflict()
-  elseif fresh and self.current then
-    -- start in the file panel, like `git status`
+  elseif fresh then
+    -- start in the file panel, like `git status` (also when it is clean: F, p, P are there)
     api.nvim_set_current_win(self.layout.files_win)
-    self.files:set_cursor_to(self.current)
+    if self.current then
+      self.files:set_cursor_to(self.current)
+    end
   end
   return self
 end
@@ -731,17 +733,18 @@ end
 --- `git commit <args>`: the message in a window below; `:wq` commits, `:q!` aborts.
 function StatusView:start_commit(args)
   require("diffmerge.commit").run(self.repo, args, function()
-    if not self.cleaned and self.layout:is_valid() then
-      self:after_change()
-    end
+    views.refresh_repo(self.repo)
   end)
 end
 
---- A commit is running: what is staged must stay as it is (git commits the index it started
---- with).
+--- A commit or a pull is running: what is staged must stay as it is (git commits the index
+--- it started with; a pull changes it).
 function StatusView:committing()
   if require("diffmerge.commit").running() then
     util.warn("a commit is running: finish it first (:wq commits, :q! aborts)")
+    return true
+  elseif require("diffmerge.remote").running(self.repo) == "pull" then
+    util.warn("git pull is running: wait for it")
     return true
   end
   return false
@@ -772,6 +775,31 @@ end
 --- `ca`: amend the last commit (its message to edit).
 function StatusView:action_commit_amend()
   self:start_commit({ "--amend" })
+end
+
+---------------------------------------------------------------------------
+-- Fetch, pull, push
+---------------------------------------------------------------------------
+
+--- `F`: git fetch.
+function StatusView:action_fetch()
+  require("diffmerge.remote").fetch(self.repo, {}, function()
+    views.refresh_repo(self.repo)
+  end)
+end
+
+--- `p`: git pull (your git config decides how).
+function StatusView:action_pull()
+  require("diffmerge.remote").pull(self.repo, {}, function()
+    views.refresh_repo(self.repo)
+  end)
+end
+
+--- `P`: git push.
+function StatusView:action_push()
+  require("diffmerge.remote").push(self.repo, {}, function()
+    views.refresh_repo(self.repo)
+  end)
 end
 
 ---------------------------------------------------------------------------

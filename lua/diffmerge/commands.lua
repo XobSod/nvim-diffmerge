@@ -145,6 +145,15 @@ M.subcommands = {
   end,
 }
 
+for _, what in ipairs({ "fetch", "pull", "push" }) do
+  M.subcommands[what] = function(_, cmd)
+    -- quoted as in a shell
+    local words = util.shell_words(cmd.args or "")
+    table.remove(words, 1)
+    dm().remote(what, words)
+  end
+end
+
 function M.run(cmd)
   require("diffmerge").ensure_setup()
   local args = vim.deepcopy(cmd.fargs)
@@ -186,6 +195,15 @@ function M.complete(arglead, cmdline, _)
     return filter(names, arglead)
   end
   local sub = words[2]
+  if sub == "fetch" or sub == "pull" or sub == "push" then
+    local remotes = vim.split(require("diffmerge.git").output(require("diffmerge.git").find_repo() or nil, { "remote" }) or "", "\n", { trimempty = true })
+    local options = {
+      fetch = { "--all", "--prune", "--tags" },
+      pull = { "--rebase", "--ff-only", "--no-rebase" },
+      push = { "--tags", "--set-upstream", "--force-with-lease", "--force-if-includes", "--no-verify", "--dry-run" },
+    }
+    return filter(vim.list_extend(vim.list_extend(vim.deepcopy(options[sub]), remotes), refs()), arglead)
+  end
   if sub == "commit" then
     return filter({ "--amend", "--no-verify", "--allow-empty", "--signoff", "--no-edit", "--fixup=", "--squash=" }, arglead)
   end

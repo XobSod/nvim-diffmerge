@@ -121,7 +121,7 @@ function M.compare(left, right, opts)
   return require("diffmerge.view.diff").open_compare(left, right, opts)
 end
 
---- `git commit <args>` with the message edited in this Neovim; status views follow.
+--- `git commit <args>` with the message edited in this Neovim; the views follow.
 ---@param args? string[]
 function M.commit(args)
   M.ensure_setup()
@@ -130,11 +130,26 @@ function M.commit(args)
     return
   end
   require("diffmerge.commit").run(repo, args or {}, function()
-    for _, view in pairs(require("diffmerge.view").views) do
-      if view.kind_name == "status" and view.repo.root == repo.root and not view.cleaned then
-        view:after_change()
-      end
-    end
+    require("diffmerge.view").refresh_repo(repo)
+  end)
+end
+
+--- git fetch / pull / push <args> in the background; the views follow.
+---@param what "fetch"|"pull"|"push"
+---@param args? string[]
+function M.remote(what, args)
+  M.ensure_setup()
+  local remote = require("diffmerge.remote")
+  if not remote.kinds[what] then
+    require("diffmerge.util").err(("not fetch, pull or push: %s"):format(tostring(what)))
+    return
+  end
+  local repo = repo_for()
+  if not repo then
+    return
+  end
+  remote[what](repo, args or {}, function()
+    require("diffmerge.view").refresh_repo(repo)
   end)
 end
 

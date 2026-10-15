@@ -211,6 +211,10 @@ function M.run(repo, args, on_done)
     end
     return
   end
+  if require("diffmerge.remote").running(repo) == "pull" then
+    util.warn("git pull is running: commit when it is done")
+    return
+  end
   if source.unsaved_index(repo) then
     util.warn("the INDEX buffer has unsaved edits: :w it first")
     return

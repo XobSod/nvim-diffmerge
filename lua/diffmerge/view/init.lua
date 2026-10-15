@@ -106,6 +106,20 @@ function View:attach_files_panel()
   end
 end
 
+--- The status and diff views of `repo` show it anew (after a commit, fetch, pull, push); log
+--- views keep what you marked there (R reloads them).
+function M.refresh_repo(repo)
+  for _, view in pairs(M.views) do
+    if view.repo and view.repo.root == repo.root and not view.cleaned and view.layout:is_valid() then
+      if view.kind_name == "status" then
+        view:after_change()
+      elseif view.kind_name == "diff" then
+        view:refresh()
+      end
+    end
+  end
+end
+
 --- Whether an action is available in this view (e.g. staging only in status views).
 function View:supports(action, _group)
   return self["action_" .. action] ~= nil

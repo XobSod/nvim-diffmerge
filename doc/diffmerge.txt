@@ -10,6 +10,7 @@ CONTENTS                                                   *diffmerge-contents*
      Status ..................................... |diffmerge-status|
      Stashes .................................... |diffmerge-stash|
      Committing ................................. |diffmerge-commit|
+     Fetch / pull / push ........................ |diffmerge-remote|
      Diff ....................................... |diffmerge-diff|
      Log / history .............................. |diffmerge-log|
      Merge ...................................... |diffmerge-merge|
@@ -104,6 +105,11 @@ With lazy.nvim: >lua
                           alias dmdiff='nvim -c "DiffMerge compare" --'
                           dmdiff old.txt new.txt
 <
+:DiffMerge fetch [args]
+:DiffMerge pull [args]
+:DiffMerge push [args]  git fetch / pull / push in the background
+                        (|diffmerge-remote|).
+
 :DiffMerge commit [args]
                         `git commit [args]`, the message edited in a window
                         below (|diffmerge-commit|).
@@ -255,6 +261,32 @@ as it is (git commits the index it started with) and the status view does not
 close. What git says (the new commit, or why not, e.g. a failing hook) shows
 when it is done; a message rejected after you wrote it (a commit-msg hook) is
 offered again by the next `cc`.
+
+FETCH / PULL / PUSH                                         *diffmerge-remote*
+
+`F` fetches, `p` pulls, `P` pushes (the file panel of the status view;
+`:DiffMerge fetch|pull|push [args]` with any arguments). They run in the
+background, one at a time per repository; what git says shows when it is done,
+with how far ahead / behind the upstream branch is (also in the view's title).
+While one runs, `F`, `p` or `P` offers to stop it (git and its hooks);
+quitting Neovim waits for it a while. Status and diff views follow them; a
+log view keeps what you marked (`R` reloads it).
+
+  pull    plain `git pull`: your git config decides how (pull.ff, pull.rebase).
+          Not during a merge, rebase or commit; files with unsaved changes have
+          to be saved first. Conflicts show under Conflicts. Stopping a pull
+          can leave files half updated: you are told what it left.
+  push    a branch without upstream, when git refuses (push.default simple or
+          upstream): offered to push it to its remote (pushRemote,
+          remote.pushDefault, origin; several: asked) and track it there.
+          Pushed without one (push.default current): offered to track it.
+          Rejected because the remote's branch has commits that are not here:
+          - not fetched yet: `F` fetches them, `p` pulls them;
+          - fetched but not in your branch: `p` pulls them;
+          - your branch was rewritten on top of them (an amend, a rebase):
+            offered `--force-with-lease --force-if-includes`, which
+            overwrites the remote only if it is still what was fetched last;
+            never `--force`.
 
 ------------------------------------------------------------------------------
 DIFF                                                           *diffmerge-diff*
@@ -427,6 +459,9 @@ merge                        file_panel                log_panel
                                c       commit_menu
                                cc      commit
                                ca      commit_amend
+                               F       fetch
+                               p       pull
+                               P       push
                                <leader>1 take_local_file F     toggle_first_parent
                                <leader>3 take_remote_file
                                i       toggle_tree       a     toggle_all_branches
@@ -503,6 +538,7 @@ Conflict colours are blended from the Normal background.
     dm.difftool(left, right, name)
     dm.compare(left, right)
     dm.commit({ "--amend" })
+    dm.remote("push", { "--tags" })   -- "fetch" | "pull" | "push"
     dm.mergetool(local_, base, remote, merged)
     dm.current()   -- view of the current tab
     dm.close()

@@ -7,7 +7,8 @@ dependencies, Neovim 0.12+.
   `HEAD | WORKING TREE | INDEX` (only the columns that differ); `<Space>` toggles the line
   under the cursor between unstaged and staged (lazygit style), `-` the hunk, visual mode the
   selection — the change stays in view and changes colour; `X` discards it. Opened from a file,
-  it shows that file at the cursor's line. The log of the repository goes below it (`gL`).
+  it shows that file at the cursor's line. The log of the repository goes below it (`gL`; `gF`
+  the file panel); `g?` lists the keys of the window you are in, by function.
 - **Stashing what you staged** — `s` stashes the staged lines and hunks only (also next to
   unstaged changes, where `git stash --staged` fails), files, or everything; stashes are listed
   below the changes and open like changes, read-only; apply, pop, drop.
@@ -55,12 +56,12 @@ lazy.nvim:
   opts = {},
   keys = {
     { "<leader>do", "<CMD>DiffMerge<CR>", desc = "Status" },
-    { "<leader>dq", "<CMD>DiffMerge close<CR>", desc = "Close" },
-    { "<leader>dl", "<CMD>DiffMerge log<CR>", desc = "Log (repository)" },
+    { "<leader>dl", "<CMD>DiffMerge log<CR>", desc = "Log (show / hide)" },
+    { "<leader>df", "<CMD>DiffMerge files<CR>", desc = "Files (show / hide)" },
     { "<leader>dh", "<CMD>DiffMerge history<CR>", desc = "History (file)" },
     { "<leader>dh", ":DiffMerge history<CR>", mode = "x", desc = "History (lines)" },
     { "<leader>dc", "<CMD>DiffMerge conflicts<CR>", desc = "Conflicts" },
-    { "<leader>df", "<CMD>DiffMerge files<CR>", desc = "Toggle files" },
+    { "<leader>dq", "<CMD>DiffMerge close<CR>", desc = "Close" },
   },
 }
 ```

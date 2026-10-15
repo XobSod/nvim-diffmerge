@@ -245,7 +245,7 @@ H.describe("fetch / pull / push", function()
     for _, lhs in ipairs({ "F", "p", "P" }) do
       H.ok((mapped(log.log.buf, lhs) or ""):find("git", 1, true), lhs)
     end
-    H.ok((mapped(log.log.buf, "gF") or ""):find("first%-parent"), mapped(log.log.buf, "gF"))
+    H.ok((mapped(log.log.buf, "g^") or ""):find("first%-parent"), mapped(log.log.buf, "g^"))
     local _ = mine
   end)
 

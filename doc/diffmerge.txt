@@ -48,12 +48,12 @@ With lazy.nvim: >lua
       opts = {},
       keys = {
         { "<leader>do", "<CMD>DiffMerge<CR>", desc = "Status" },
-        { "<leader>dq", "<CMD>DiffMerge close<CR>", desc = "Close" },
-        { "<leader>dl", "<CMD>DiffMerge log<CR>", desc = "Log (repository)" },
+        { "<leader>dl", "<CMD>DiffMerge log<CR>", desc = "Log (show / hide)" },
+        { "<leader>df", "<CMD>DiffMerge files<CR>", desc = "Files (show / hide)" },
         { "<leader>dh", "<CMD>DiffMerge history<CR>", desc = "History (file)" },
         { "<leader>dh", ":DiffMerge history<CR>", mode = "x", desc = "History (lines)" },
         { "<leader>dc", "<CMD>DiffMerge conflicts<CR>", desc = "Conflicts" },
-        { "<leader>df", "<CMD>DiffMerge files<CR>", desc = "Toggle files" },
+        { "<leader>dq", "<CMD>DiffMerge close<CR>", desc = "Close" },
       },
     }
 <
@@ -84,8 +84,10 @@ With lazy.nvim: >lua
 :DiffMerge log [git log args] [-- paths]
                         The status view with its log shown: the commit graph,
                         all branches by default (like `git log --graph
-                        --branches --remotes`). With arguments, a view of its
-                        own: that log, and the status of those paths only.
+                        --branches --remotes`). In a status view (no
+                        arguments; also one of a history): shows / hides its
+                        log, like `gL`. With arguments, a view of its own:
+                        that log, and the status of those paths only.
 
 :DiffMerge history [path]
                         A view of the history of a file or directory (default:
@@ -135,7 +137,7 @@ With lazy.nvim: >lua
 :DiffMerge refresh      Refresh the view.
 :DiffMerge layout [name]
                         Cycle or set the layout (|diffmerge-layouts|).
-:DiffMerge files        Toggle the file panel.
+:DiffMerge files        Show / hide the file panel, like `gF`.
 :DiffMerge focus_files  Focus the file panel.
 :DiffMerge abort        (git mergetool) Quit reporting failure to git.
 
@@ -352,10 +354,11 @@ in A); in `git diff` it is just the two snapshots.
 LOG / HISTORY                                                   *diffmerge-log*
 
 The status view has the log of the repository at the bottom: `gL` (in any
-window of the view) shows and hides it, `:DiffMerge log` opens the status
-view with it shown. It is `git log --graph` with git's own colours. The line
-format is configurable (`log.format`, a git pretty format); the default
-mirrors a `--graph --oneline --decorate` "tree view" with author and date.
+window of the view) or `:DiffMerge log` shows and hides it; `:DiffMerge log`
+from elsewhere opens the status view with it shown. It is `git log --graph`
+with git's own colours. The line format is configurable (`log.format`, a git
+pretty format); the default mirrors a `--graph --oneline --decorate` "tree
+view" with author and date.
 
 The row under the cursor decides what the file panel and diff windows show:
 
@@ -372,8 +375,9 @@ The row under the cursor decides what the file panel and diff windows show:
 
 Commits and comparisons are read-only: the staging keys say so (the Working
 tree row stages). Hiding the log keeps what it selected; `:DiffMerge` goes
-back to the working tree and clears the marks. A new view with the log shown
-starts on the Working tree row when there are changes, else on HEAD.
+back to the working tree and clears the marks. The first time the log is
+shown, it starts on the Working tree row, unless the status has nothing to
+show (no changes, no stash): then on HEAD.
 
 A visual selection must be one line of history: exactly the commits of
 `git rev-list O^..N`. If it is not (e.g. rows of two branches), you are told
@@ -387,7 +391,7 @@ new one is complete; the cursor stays on its row, and the marks are found
 again by their commits (a marked commit that is gone, e.g. amended, clears the
 marks). The Working tree / Index rows count the changes as they change.
 
-`gF` toggles --first-parent, `a` all branches / HEAD only, `f` asks for extra
+`g^` toggles --first-parent, `a` all branches / HEAD only, `f` asks for extra
 `git log` arguments (--author=, --grep=, --since=, ...), `K` shows the commit,
 `Y` yanks its hash, `b` checks it out (on the Working tree / Index row: the
 branch picker; |diffmerge-branches|), `R` reloads. The keys of the whole
@@ -503,47 +507,48 @@ explicitly. To go through all conflicts in one Neovim, use
                                                             *diffmerge-actions*
 
 All mappings are buffer-local and only exist while a view shows the buffer;
-mappings they shadow are restored afterwards. `g?` lists them. Change them
-with `keymaps.<group>[lhs] = action | function | false`.
+mappings they shadow are restored afterwards. `g?` lists the keys of the
+window it is pressed in, by function (that window's own first). Change them
+with `keymaps.<group>[lhs] = action | function | false`. A panel's own group
+(`file_panel`, `log_panel`) wins over `view` and `repo` in that panel; `false`
+there turns a key of them off in that panel only.
 
-view (every window)          diff (status diff windows)
-  ]f / [f   next_file          -        toggle_stage_hunk (visual: lines)
-  gl        cycle_layout       <Space>  toggle_stage_line (visual: lines)
-  gL        toggle_log         X        discard_change (visual: lines)
-  <leader>W toggle_whitespace
-  g?        help
+The scheme: `g` and a letter for a part of the view, in every window; the
+keys of the whole repository the same in both panels (group `repo`); staging
+the same in the file panel and the diff windows (`-`, `<Space>`, `X`); `]` /
+`[` to move on.
 
-merge                        file_panel
-  <leader>1 toggle_local       <CR> o  select
-  <leader>2 toggle_base        l       expand
-  <leader>3 toggle_remote      h       collapse
-  <leader>0 take_none          - <Space> toggle_stage
-  ]x / [x   next/prev_conflict S       stage_all
-  ]c / [c   next/prev_chunk    U       unstage_all
-                               X       discard
-                               s       stash
-                               c       commit_menu
-                               cc      commit
-                               ca      commit_amend
-                               F       fetch
-                               p       pull
-                               P       push
-                               b       branch
-                               <leader>1 take_local_file
-                               <leader>3 take_remote_file
-                               i       toggle_tree
-                               R       refresh
-                               q       close
+view (every window)
+  ]f / [f    next_file / prev_file
+  gF  gL     toggle_files / toggle_log      the file panel / the log panel
+  gl         cycle_layout
+  gW         toggle_whitespace
+  g?         help
 
-log_panel
-  <CR>  select                 gF    toggle_first_parent
-  m     mark                   a     toggle_all_branches
-  M     clear_marks            f     filter
-  t     toggle_range_mode      s     stash
-  ^     cycle_parent           c / cc / ca  commit_menu / commit / commit_amend
-  K     commit_details         F / p / P    fetch / pull / push
-  Y     yank_hash              R     refresh
-  b     checkout               q     close
+repo (file panel and log panel of status views)
+  c  cc  ca  commit_menu / commit / commit_amend
+  s          stash
+  F  p  P    fetch / pull / push
+
+file_panel                           log_panel
+  <CR> o    select                     <CR>  select (visual: combined)
+  l  h      expand / collapse          m  M  mark / clear_marks
+  i         toggle_tree                t     toggle_range_mode
+  - <Space> toggle_stage               ^     cycle_parent
+  S  U      stage_all / unstage_all    g^    toggle_first_parent
+  X         discard                    a     toggle_all_branches
+  <leader>1 take_local_file            f     filter
+  <leader>3 take_remote_file           K     commit_details
+  b         branch                     Y     yank_hash
+  R         refresh                    b     checkout
+  q         close                      R     refresh
+                                       q     close
+
+diff (status diff windows)           merge (windows of a merge)
+  -         toggle_stage_hunk          <leader>1/2/3 toggle_local/base/remote
+  <Space>   toggle_stage_line          <leader>0     take_none
+  X         discard_change             ]x  [x        next/prev_conflict
+            (visual: the lines)        ]c  [c        next/prev_chunk
 
 ==============================================================================
 7. CONFIGURATION                                             *diffmerge-config*

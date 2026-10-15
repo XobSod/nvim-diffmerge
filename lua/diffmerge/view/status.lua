@@ -43,18 +43,13 @@ local function literal(paths)
   return out
 end
 
-local function has_changes(counts)
-  return counts ~= nil and counts.unstaged + counts.staged + counts.untracked + counts.conflicts > 0
-end
-
 --- Opens the status view: the main one of a repository (`:DiffMerge`; `:DiffMerge log` shows
 --- its log), or one of its own for `:DiffMerge log <args>` / `history <path>`: the log and the
 --- status of those paths only.
 ---@param repo diffmerge.Repo
 ---@param opts? { mode?: "status"|"log"|"history", args?: string[], path?: string, range?: integer[], conflicts?: boolean, focus?: { abs: string, line: integer } }
 ---   mode: "status" (default): the working tree, the log as it was (a new view: hidden); "log",
----   "history": with the log shown (a new view: on the working tree when it has changes, else
----   on HEAD)
+---   "history": with the log shown (see show_log for where it starts)
 ---   focus: the file (and line) to show, e.g. the buffer the view was opened from
 function M.open(repo, opts)
   opts = opts or {}
@@ -79,10 +74,6 @@ function M.open(repo, opts)
     self:setup_watchers()
     self:refresh()
     if mode ~= "status" then
-      if self.line_range or not has_changes(self.counts) then
-        -- nothing to stage there: the newest commit (HEAD) instead
-        self.selected_id = nil
-      end
       self:show_log()
     end
   else
@@ -92,10 +83,6 @@ function M.open(repo, opts)
       self:refresh()
     end
     if mode ~= "status" then
-      if not self.log and self.shows == "worktree" and not has_changes(self.counts) then
-        -- the log shown for the first time, nothing to stage: on HEAD, as a new view
-        self.selected_id = nil
-      end
       self:show_log()
     end
   end

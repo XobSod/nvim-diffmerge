@@ -179,10 +179,10 @@ function Layout:open_log(above)
   api.nvim_set_current_win(from)
 end
 
---- Whether the log window is the only one of the tab (then it cannot go).
-function Layout:log_alone()
+--- Whether `win` is the only window of the tab (then it cannot go).
+function Layout:alone(win)
   local others = vim.tbl_filter(function(w)
-    return w ~= self.log_win and api.nvim_win_get_config(w).relative == ""
+    return w ~= win and api.nvim_win_get_config(w).relative == ""
   end, api.nvim_tabpage_list_wins(self.tab))
   return #others == 0
 end

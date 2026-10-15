@@ -61,6 +61,11 @@ M.subcommands = {
     dm().diff(args)
   end,
   log = function(args)
+    local view = dm().current()
+    if #args == 0 and view and view.action_toggle_log then
+      -- in a status view: its log shown / hidden, like gL
+      return view:action_toggle_log()
+    end
     dm().log({ args = args })
   end,
   history = function(args, cmd)
@@ -126,7 +131,7 @@ M.subcommands = {
   files = function()
     local view = current_view()
     if view then
-      view:toggle_files()
+      view:action_toggle_files()
     end
   end,
   focus_files = function()

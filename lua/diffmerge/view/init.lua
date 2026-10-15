@@ -88,6 +88,10 @@ function View:attach_files_panel()
     keymaps.apply(buf, "view", handler, function(action)
       return self:supports(action, "view")
     end)
+    -- (the panel's own keys last: they win)
+    keymaps.apply(buf, "repo", handler, function(action)
+      return self:supports(action, "repo")
+    end)
     keymaps.apply(buf, "file_panel", handler, function(action)
       return self:supports(action, "file_panel")
     end)
@@ -124,6 +128,9 @@ end
 
 --- Whether an action is available in this view (e.g. staging only in status views).
 function View:supports(action, _group)
+  if action == "toggle_files" and not self.files then
+    return false
+  end
   return self["action_" .. action] ~= nil
 end
 
@@ -672,14 +679,54 @@ function View:action_refresh()
   end
 end
 
+--- Shows / hides the file panel (showing it makes the diff windows anew: the cursor stays where
+--- it was in them).
 function View:toggle_files()
   if not self.files then
     return
   end
-  self.layout:toggle_files()
+  local role = self.layout:role_of(api.nvim_get_current_win())
+  local cursors = {}
+  for r, w in pairs(self.layout.wins) do
+    if util.win_valid(w) then
+      cursors[r] = api.nvim_win_get_cursor(w)
+    end
+  end
+  local rebuilt = self.layout:toggle_files()
   self:attach_files_panel()
-  if self.current then
+  if rebuilt and self.current then
     self:show_entry(self.current, { force = true })
+    for r, cursor in pairs(cursors) do
+      if util.win_valid(self.layout.wins[r]) then
+        pcall(api.nvim_win_set_cursor, self.layout.wins[r], cursor)
+      end
+    end
+    if role and util.win_valid(self.layout.wins[role]) then
+      api.nvim_set_current_win(self.layout.wins[role])
+    end
+  end
+end
+
+--- `gF`: shows (and goes to) / hides the file panel.
+function View:action_toggle_files()
+  if not self.files then
+    util.info("no file panel in this view")
+    return
+  end
+  local showing = not util.win_valid(self.layout.files_win)
+  local here = api.nvim_get_current_win() == self.layout.files_win
+  if not showing and self.layout:alone(self.layout.files_win) then
+    util.info("the file panel is the only window here")
+    return
+  end
+  self:toggle_files()
+  if showing and util.win_valid(self.layout.files_win) then
+    api.nvim_set_current_win(self.layout.files_win)
+    if self.current then
+      self.files:set_cursor_to(self.current)
+    end
+  elseif here then
+    self:focus_main()
   end
 end
 

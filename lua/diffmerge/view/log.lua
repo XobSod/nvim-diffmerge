@@ -109,11 +109,20 @@ function Log:log_shown()
   return util.win_valid(self.layout.log_win)
 end
 
---- Shows the log panel: made and loaded the first time, reloaded when the branches moved while
---- it was hidden; the cursor on the row of what is shown.
+--- Shows the log panel: made and loaded the first time (on HEAD when the status has nothing to
+--- show, not even a stash, or there is no Working tree row), reloaded when the branches moved
+--- while it was hidden; the cursor on the row of what is shown.
 function Log:show_log()
   if self:log_shown() then
     return
+  end
+  if not self.log then
+    local listed = vim.iter((self.status or {}).sections or {}):any(function(sec)
+      return #sec.entries > 0
+    end)
+    if self.line_range or (self.selected_id == "worktree" and not listed) then
+      self.selected_id = nil
+    end
   end
   self.layout:open_log(require("diffmerge.commit").message_window(self.layout.tab))
   self.layout:equalize()
@@ -148,7 +157,7 @@ end
 function Log:hide_log()
   if not self:log_shown() then
     return
-  elseif self.layout:log_alone() then
+  elseif self.layout:alone(self.layout.log_win) then
     util.info("the log is the only window here")
     return
   end
@@ -183,6 +192,8 @@ function Log:map_log_panel()
   keymaps.apply(self.log.buf, "view", handler, function(action)
     return self:supports(action, "view")
   end)
+  -- (the panel's own keys last: they win)
+  keymaps.apply(self.log.buf, "repo", handler)
   keymaps.apply(self.log.buf, "log_panel", handler)
   local preview = config.options.auto_preview
     and util.debounce(config.options.preview_debounce, function()

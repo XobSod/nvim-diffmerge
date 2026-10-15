@@ -56,14 +56,25 @@ M.defaults = {
   -- Buffer-local keymaps. Keys are lhs, values are action names (see :h diffmerge-actions),
   -- functions, or false to disable a default.
   keymaps = {
-    -- every window of a view (panels and diff windows)
+    -- every window of a view (panels and diff windows); g + a letter: a part of the view
     view = {
       ["]f"] = "next_file",
       ["[f"] = "prev_file",
-      ["gl"] = "cycle_layout",
+      ["gF"] = "toggle_files",
       ["gL"] = "toggle_log",
-      ["<leader>W"] = "toggle_whitespace",
+      ["gl"] = "cycle_layout",
+      ["gW"] = "toggle_whitespace",
       ["g?"] = "help",
+    },
+    -- both panels of a status view: the whole repository
+    repo = {
+      ["s"] = "stash",
+      ["c"] = "commit_menu",
+      ["cc"] = "commit",
+      ["ca"] = "commit_amend",
+      ["F"] = "fetch",
+      ["p"] = "pull",
+      ["P"] = "push",
     },
     -- diff windows of status views (staging)
     diff = {
@@ -92,13 +103,6 @@ M.defaults = {
       ["S"] = "stage_all",
       ["U"] = "unstage_all",
       ["X"] = "discard",
-      ["s"] = "stash",
-      ["c"] = "commit_menu",
-      ["cc"] = "commit",
-      ["ca"] = "commit_amend",
-      ["F"] = "fetch",
-      ["p"] = "pull",
-      ["P"] = "push",
       ["b"] = "branch",
       ["<leader>1"] = "take_local_file",
       ["<leader>3"] = "take_remote_file",
@@ -115,16 +119,9 @@ M.defaults = {
       ["K"] = "commit_details",
       ["Y"] = "yank_hash",
       ["b"] = "checkout",
-      ["gF"] = "toggle_first_parent",
+      ["g^"] = "toggle_first_parent",
       ["a"] = "toggle_all_branches",
       ["f"] = "filter",
-      ["s"] = "stash",
-      ["c"] = "commit_menu",
-      ["cc"] = "commit",
-      ["ca"] = "commit_amend",
-      ["F"] = "fetch",
-      ["p"] = "pull",
-      ["P"] = "push",
       ["R"] = "refresh",
       ["q"] = "close",
     },

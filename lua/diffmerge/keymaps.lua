@@ -48,6 +48,7 @@ M.descriptions = {
   cycle_parent = "Cycle parent of a merge commit",
   commit_details = "Commit details",
   yank_hash = "Yank commit hash",
+  checkout = "Check out the commit (its branch; else one following a remote branch, detached, a new one)",
   toggle_first_parent = "Toggle --first-parent",
   toggle_all_branches = "Toggle all branches / HEAD only",
   filter = "Filter log (git log arguments)",

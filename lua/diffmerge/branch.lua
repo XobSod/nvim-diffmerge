@@ -1,6 +1,7 @@
 --- Switching branches: `git switch`, from a picker of the local branches and the remote ones
---- without a local branch yet, or to a new one. Uncommitted changes in the way: offered to stash
---- them, switch, and bring them back there.
+--- without a local branch yet, or to a new one; or to a commit of the log (its branch, else
+--- detached or a new branch there). Uncommitted changes in the way: offered to stash them,
+--- switch, and bring them back there.
 local git = require("diffmerge.git")
 local remote = require("diffmerge.remote")
 local stash = require("diffmerge.stash")
@@ -14,7 +15,7 @@ end
 
 --- What the picker offers: local branches (most recent first; the current one marked), remote
 --- branches without a local one of that name, and a new branch.
----@return { kind: "local"|"remote"|"new", name?: string, current?: boolean, track?: string, when?: string }[]
+---@return { kind: "local"|"remote"|"new", name?: string, branch?: string, current?: boolean, track?: string, when?: string }[]
 function M.choices(repo)
   local current = git.line(repo, { "symbolic-ref", "-q", "HEAD" })
   local out, mine = {}, {}
@@ -32,7 +33,7 @@ function M.choices(repo)
     local name, symref, when = l:match("^(.-)\t(.-)\t(.*)$")
     local branch = name and symref == "" and name:match("^[^/]+/(.+)$")
     if branch and not mine[branch] then
-      out[#out + 1] = { kind = "remote", name = name, when = when }
+      out[#out + 1] = { kind = "remote", name = name, branch = branch, when = when }
     end
   end
   out[#out + 1] = { kind = "new" }
@@ -61,7 +62,7 @@ local function target(args)
   end
   for i = #args, 1, -1 do
     if not args[i]:match("^%-") then
-      return args[i]
+      return #args[i] >= 40 and args[i]:match("^%x+$") and util.short(args[i]) or args[i]
     end
   end
   return vim.tbl_contains(args, "--detach") and "a detached HEAD" or "it"
@@ -213,6 +214,15 @@ local function not_now(repo)
   end
 end
 
+--- An on_done for switches: the views of `repo` show it anew; log views reload only when HEAD
+--- went elsewhere (else they keep what you marked).
+function M.refresher(repo)
+  local before = position(repo)
+  return function()
+    require("diffmerge.view").refresh_repo(repo, { log = position(repo) ~= before })
+  end
+end
+
 --- `git switch <args>`. Not during a merge, rebase or commit; files with unsaved changes have to
 --- be saved first; while another git operation runs: offered to stop it. Uncommitted changes in
 --- the way: offered to stash them, switch, and pop them there; untracked files in the way are
@@ -270,15 +280,46 @@ function M.switch(repo, args, on_done)
   end)
 end
 
---- The picker: switch to the branch chosen (a remote one: a local branch tracking it), or a new
---- one from here.
-function M.pick(repo, on_done)
+--- Whether a switch can start now: else said why (another git operation running: offered to
+--- stop it).
+local function can_start(repo)
   if remote.running(repo) then
-    return remote.run(repo, "switch", {}, function() end)
+    remote.run(repo, "switch", {}, function() end)
+    return false
   end
   local why = not_now(repo)
   if why then
     util.warn(why)
+    return false
+  end
+  return true
+end
+
+--- Asks for the name of a new branch; one git does not take is refused.
+local function ask_name(repo, cb)
+  vim.ui.input({ prompt = "New branch: " }, function(name)
+    if not name or vim.trim(name) == "" then
+      return
+    end
+    name = vim.trim(name)
+    if not git.run(repo, { "check-ref-format", "--branch", name }).ok then
+      util.warn(("not a branch name: %s"):format(name))
+      return
+    end
+    cb(name)
+  end)
+end
+
+--- `git switch` arguments for a local branch following the remote one `c.name` (its whole
+--- name: a tag "origin/x" would make origin/x ambiguous).
+local function track(c)
+  return { "-c", c.branch, "--track", "refs/remotes/" .. c.name }
+end
+
+--- The picker: switch to the branch chosen (a remote one: a local branch tracking it), or a new
+--- one from here.
+function M.pick(repo, on_done)
+  if not can_start(repo) then
     return
   end
   vim.ui.select(M.choices(repo), { prompt = "Switch to", format_item = label }, function(c)
@@ -291,21 +332,118 @@ function M.pick(repo, on_done)
       elseif c.kind == "local" then
         M.switch(repo, { c.name }, on_done)
       elseif c.kind == "remote" then
-        M.switch(repo, { "--track", c.name }, on_done)
+        M.switch(repo, track(c), on_done)
       else
-        vim.ui.input({ prompt = "New branch: " }, function(name)
-          if not name or vim.trim(name) == "" then
-            return
-          end
-          name = vim.trim(name)
-          if not git.run(repo, { "check-ref-format", "--branch", name }).ok then
-            util.warn(("not a branch name: %s"):format(name))
-            return
-          end
+        ask_name(repo, function(name)
           M.switch(repo, { "-c", name }, on_done)
         end)
       end
     end)
+  end)
+end
+
+--- The branches whose tip is `sha`: local ones (and the worktree each is checked out in, if
+--- any), remote ones (not symrefs: origin/HEAD).
+local function branches_at(repo, sha)
+  local out = { mine = {}, remote = {} }
+  local format = "--format=%(refname)%09%(refname:lstrip=2)%09%(symref)%09%(worktreepath)"
+  local refs = git.output(repo, { "for-each-ref", "--points-at", sha, format, "refs/heads", "refs/remotes" })
+  for _, l in ipairs(lines(refs)) do
+    local full, name, symref, worktree = l:match("^(.-)\t(.-)\t(.-)\t(.*)$")
+    if full and vim.startswith(full, "refs/heads/") then
+      out.mine[#out.mine + 1] = { name = name, full = full, worktree = worktree }
+    elseif full and symref == "" then
+      out.remote[#out.remote + 1] = name
+    end
+  end
+  return out
+end
+
+--- What checking out a commit offers: its local branches; else its remote branches without a
+--- local one of that name (a local branch tracking it), the commit detached (unless HEAD is
+--- already there), a new branch there. Branches checked out in another worktree are not
+--- offered: they come second (with the worktree).
+---@return { kind: "local"|"track"|"detach"|"new", name?: string, branch?: string, current?: boolean }[]
+---@return { name: string, worktree: string }[]
+function M.commit_choices(repo, sha)
+  local at = branches_at(repo, sha)
+  local current = git.line(repo, { "symbolic-ref", "-q", "HEAD" })
+  local out, elsewhere = {}, {}
+  for _, b in ipairs(at.mine) do
+    if b.full == current then
+      out[#out + 1] = { kind = "local", name = b.name, current = true }
+    elseif b.worktree ~= "" then
+      elsewhere[#elsewhere + 1] = { name = b.name, worktree = b.worktree }
+    else
+      out[#out + 1] = { kind = "local", name = b.name }
+    end
+  end
+  if #out > 0 then
+    return out, elsewhere
+  end
+  for _, name in ipairs(at.remote) do
+    local branch = name:match("^[^/]+/(.+)$")
+    if branch and not git.run(repo, { "show-ref", "-q", "--verify", "refs/heads/" .. branch }).ok then
+      out[#out + 1] = { kind = "track", name = name, branch = branch }
+    end
+  end
+  if current or git.line(repo, { "rev-parse", "-q", "--verify", "HEAD" }) ~= sha then
+    out[#out + 1] = { kind = "detach" }
+  end
+  out[#out + 1] = { kind = "new" }
+  return out, elsewhere
+end
+
+--- Checks out a commit (the log's `b`): the branch there (several: which one); else a menu
+--- (|vim.ui.select|): a local branch following a remote one there, the commit detached, a new
+--- branch there.
+function M.at_commit(repo, sha, on_done)
+  if not can_start(repo) then
+    return
+  end
+  local short = util.short(sha)
+  local function go(c)
+    if c.kind == "local" and c.current then
+      util.info("already on " .. c.name)
+    elseif c.kind == "local" then
+      M.switch(repo, { c.name }, on_done)
+    elseif c.kind == "track" then
+      M.switch(repo, track(c), on_done)
+    elseif c.kind == "detach" then
+      M.switch(repo, { "--detach", sha }, on_done)
+    else
+      ask_name(repo, function(name)
+        M.switch(repo, { "-c", name, sha }, on_done)
+      end)
+    end
+  end
+  local choices, elsewhere = M.commit_choices(repo, sha)
+  if #choices == 1 and choices[1].kind == "local" then
+    return go(choices[1])
+  end
+  local function format(c)
+    if c.kind == "local" then
+      return ("%s %s"):format(c.current and "*" or " ", c.name)
+    elseif c.kind == "track" then
+      return ("%s, following %s"):format(c.branch, c.name)
+    elseif c.kind == "detach" then
+      return ("%s, detached (no branch)"):format(short)
+    end
+    return ("+ a new branch at %s"):format(short)
+  end
+  local prompt = choices[1].kind == "local" and ("Switch to (at %s)"):format(short) or ("Check out %s"):format(short)
+  if #elsewhere > 0 then
+    local held = vim.tbl_map(function(b)
+      return ("%s is checked out in %s"):format(b.name, vim.fn.fnamemodify(b.worktree, ":~"))
+    end, elsewhere)
+    prompt = ("%s (%s)"):format(prompt, table.concat(held, ", "))
+  end
+  vim.ui.select(choices, { prompt = prompt, format_item = format }, function(c)
+    if c then
+      util.after_select(function()
+        go(c)
+      end)
+    end
   end)
 end
 

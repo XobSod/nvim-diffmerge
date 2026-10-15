@@ -804,9 +804,8 @@ end
 
 --- `b`: switch branches (a picker of local and remote branches, or a new one).
 function StatusView:action_branch()
-  require("diffmerge.branch").pick(self.repo, function()
-    views.refresh_repo(self.repo, { log = true })
-  end)
+  local branch = require("diffmerge.branch")
+  branch.pick(self.repo, branch.refresher(self.repo))
 end
 
 ---------------------------------------------------------------------------

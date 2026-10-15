@@ -695,6 +695,17 @@ function LogView:action_yank_hash(ctx)
   util.info("yanked " .. row.sha)
 end
 
+--- `b`: check out the commit under the cursor (its branch; else a branch following a remote one
+--- there, detached, or a new branch there).
+function LogView:action_checkout(ctx)
+  local row = self:current_row(ctx)
+  if not row or row.kind ~= "commit" then
+    return
+  end
+  local branch = require("diffmerge.branch")
+  branch.at_commit(self.repo, row.sha, branch.refresher(self.repo))
+end
+
 function LogView:action_toggle_first_parent(ctx)
   if not in_log(self, ctx) then
     return

@@ -303,6 +303,15 @@ tracking it); and a new branch from here (it asks for the name). `:DiffMerge
 switch [args]` runs `git switch` with any arguments; without them it opens
 the picker.
 
+`b` on a commit in the log panel checks that commit out: the tip of a local
+branch switches to that branch (several there: which one; the one you are on:
+nothing to do). Otherwise a menu: for a remote branch there without a local
+branch of that name, a local branch following it (listed first); the commit
+itself, detached (`git switch --detach`; not when HEAD is already detached
+there); a new branch there (it asks for the name). A branch checked out in
+another worktree cannot be switched to: the menu names it and offers the
+others.
+
 It runs like fetch / pull / push (in the background, one at a time; `b`
 while another one runs offers to stop it), not during a merge, rebase or
 commit; files with unsaved changes have to be saved first. When uncommitted
@@ -355,7 +364,7 @@ Selecting the pseudo rows too compares against the working tree / index.
 
 `F` toggles --first-parent, `a` all branches / HEAD only, `f` asks for extra
 `git log` arguments (--author=, --grep=, --since=, ...), `K` shows the commit,
-`Y` yanks its hash, `R` reloads.
+`Y` yanks its hash, `b` checks it out (|diffmerge-branches|), `R` reloads.
 
 ------------------------------------------------------------------------------
 MERGE                                                         *diffmerge-merge*
@@ -480,21 +489,19 @@ merge                        file_panel                log_panel
   ]x / [x   next/prev_conflict S       stage_all         P     cycle_parent
   ]c / [c   next/prev_chunk    U       unstage_all       K     commit_details
                                X       discard           Y     yank_hash
-                               s       stash
-                               c       commit_menu
-                               cc      commit
-                               ca      commit_amend
-                               F       fetch
-                               p       pull
+                               s       stash             b     checkout
+                               c       commit_menu       F     toggle_first_parent
+                               cc      commit            a     toggle_all_branches
+                               ca      commit_amend      f     filter
+                               F       fetch             R     refresh
+                               p       pull              q     close
                                P       push
                                b       branch
-                               <leader>1 take_local_file F     toggle_first_parent
+                               <leader>1 take_local_file
                                <leader>3 take_remote_file
-                               i       toggle_tree       a     toggle_all_branches
-                               R       refresh           f     filter
+                               i       toggle_tree
+                               R       refresh
                                q       close
-                                                         R     refresh
-                                                         q     close
 
 ==============================================================================
 7. CONFIGURATION                                             *diffmerge-config*

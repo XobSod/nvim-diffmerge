@@ -360,4 +360,216 @@ H.describe("switching branches", function()
   end)
 end)
 
+--- The log view of mine, loaded.
+local function open_log()
+  local view = require("diffmerge").log()
+  vim.wait(5000, function()
+    return not view.log.loading and view.current ~= nil
+  end, 10)
+  H.ok(not view.log.loading, "log loaded")
+  return view
+end
+
+--- `b` on the log row of `sha`, the menu answering the choice whose label contains `text` (and
+--- `name` for a new branch): what was said, the labels, the menu's prompt (nil: no menu).
+local function checkout(view, dir, sha, text, name)
+  local said, labels, prompt = {}, {}, nil
+  local notify, select, input = vim.notify, vim.ui.select, vim.ui.input
+  vim.notify = function(msg)
+    said[#said + 1] = msg
+  end
+  vim.ui.select = function(items, opts, cb)
+    prompt = opts.prompt
+    for _, it in ipairs(items) do
+      labels[#labels + 1] = opts.format_item(it)
+    end
+    for _, it in ipairs(items) do
+      if text and opts.format_item(it):find(text, 1, true) then
+        return cb(it)
+      end
+    end
+    cb(nil)
+  end
+  vim.ui.input = function(_, cb)
+    cb(name)
+  end
+  local ok, err = pcall(function()
+    vim.wait(5000, function()
+      return not view.log.loading and view.log.by_sha[sha] ~= nil
+    end, 10)
+    local line = view.log.by_sha[sha]
+    H.ok(line, "the commit is in the log")
+    api.nvim_set_current_win(view.layout.log_win)
+    api.nvim_win_set_cursor(view.layout.log_win, { line, 0 })
+    view:dispatch("checkout", { buf = view.log.buf, win = view.layout.log_win })
+    H.flush(50)
+    H.ok(finished(dir), "git finished")
+    H.flush(50)
+  end)
+  vim.notify, vim.ui.select, vim.ui.input = notify, select, input
+  assert(ok, err)
+  return table.concat(said, "\n"), labels, prompt
+end
+
+local function rev(dir, what)
+  return vim.trim(H.git(dir, { "rev-parse", what }))
+end
+
+H.describe("checking out a commit of the log", function()
+  H.it("the tip of a local branch: that branch, no menu; the current one: already on it", function()
+    local _, mine = setup()
+    local view = open_log()
+    local said, _, prompt = checkout(view, mine, rev(mine, "topic"))
+    H.eq(prompt, nil, "no menu")
+    H.eq(current(mine), "topic")
+    H.ok(said:find("switched to topic", 1, true), said)
+    H.eq(view.head, rev(mine, "topic"), "the log followed")
+    said, _, prompt = checkout(view, mine, rev(mine, "topic"))
+    H.eq(prompt, nil, "no menu")
+    H.ok(said:find("already on topic", 1, true), said)
+    H.git(mine, { "checkout", "-q", "--detach", "topic" })
+    _, _, prompt = checkout(view, mine, rev(mine, "topic"))
+    H.eq({ prompt, current(mine) }, { nil, "topic" }, "detached at its tip: the branch")
+  end)
+
+  H.it("several local branches there: which one", function()
+    local _, mine = setup()
+    H.git(mine, { "branch", "twin", "topic" })
+    local view = open_log()
+    local _, labels, prompt = checkout(view, mine, rev(mine, "topic"), "twin")
+    H.eq(prompt, ("Switch to (at %s)"):format(rev(mine, "topic"):sub(1, 7)))
+    H.eq(labels, { "  topic", "  twin" })
+    H.eq(current(mine), "twin")
+    local said
+    said, labels = checkout(view, mine, rev(mine, "topic"), "* twin")
+    H.eq(labels, { "  topic", "* twin" })
+    H.ok(said:find("already on twin", 1, true), said)
+  end)
+
+  H.it("a remote branch only: a local branch following it (first), detached, a new branch", function()
+    local _, mine = setup()
+    local feat = rev(mine, "origin/feat")
+    -- not origin/HEAD; a tag of the same name does not get in the way
+    H.git(mine, { "remote", "set-head", "origin", "feat" })
+    H.git(mine, { "tag", "origin/feat", "master" })
+    local short = feat:sub(1, 7)
+    local view = open_log()
+    local _, labels, prompt = checkout(view, mine, feat)
+    H.eq(prompt, "Check out " .. short)
+    H.eq(labels, { "feat, following origin/feat", short .. ", detached (no branch)", "+ a new branch at " .. short })
+    H.eq(current(mine), "master", "nothing chosen")
+    checkout(view, mine, feat, "following")
+    H.eq({ current(mine), rev(mine, "HEAD") }, { "feat", feat })
+    H.eq(H.git(mine, { "config", "branch.feat.merge" }), "refs/heads/feat\n")
+    H.eq(H.git(mine, { "config", "branch.feat.remote" }), "origin\n")
+  end)
+
+  H.it("a branch checked out in another worktree: named, not offered", function()
+    local _, mine = setup()
+    local tip = rev(mine, "topic")
+    local short = tip:sub(1, 7)
+    local wt = vim.fs.dirname(mine) .. "/wt"
+    H.git(mine, { "worktree", "add", "-q", wt, "topic" })
+    local view = open_log()
+    local _, labels, prompt = checkout(view, mine, tip, "detached")
+    H.ok(prompt:find("topic is checked out in " .. vim.fn.fnamemodify(wt, ":~"), 1, true), prompt)
+    H.eq(labels, { short .. ", detached (no branch)", "+ a new branch at " .. short })
+    H.eq(rev(mine, "HEAD"), tip)
+    H.git(mine, { "switch", "-q", "master" })
+    H.git(mine, { "branch", "twin", "topic" })
+    _, _, prompt = checkout(view, mine, tip)
+    H.eq({ prompt, current(mine) }, { nil, "twin" }, "the one branch there that can be")
+  end)
+
+  H.it("a merge in progress comes first; a switch that fails leaves the log as it was", function()
+    local _, mine = setup()
+    local view = open_log()
+    H.write(mine, ".git/MERGE_HEAD", { rev(mine, "topic") })
+    local said, _, prompt = checkout(view, mine, rev(mine, "origin/feat"))
+    os.remove(mine .. "/.git/MERGE_HEAD")
+    H.eq(prompt, nil, "no menu")
+    H.ok(said:find("a merge is in progress", 1, true), said)
+    api.nvim_set_current_win(view.layout.log_win)
+    api.nvim_win_set_cursor(view.layout.log_win, { view.log.by_sha[rev(mine, "topic")], 0 })
+    view:dispatch("mark", { buf = view.log.buf, win = view.layout.log_win })
+    H.eq(#view.marks, 1)
+    H.write(mine, "feat.txt", { "mine, untracked" })
+    said = checkout(view, mine, rev(mine, "origin/feat"), "following")
+    H.ok(said:find("move it away first", 1, true), said)
+    H.eq(current(mine), "master")
+    H.eq(#view.marks, 1, "the log kept its mark")
+  end)
+
+  H.it("a remote branch whose name is a local branch elsewhere: not offered to follow", function()
+    local _, mine = setup()
+    local older = rev(mine, "master")
+    H.git(mine, { "update-ref", "refs/remotes/origin/topic", older })
+    H.git(mine, { "checkout", "-q", "topic" })
+    local view = open_log()
+    local _, labels = checkout(view, mine, rev(mine, "origin/topic"))
+    -- (master is there: switching to it)
+    H.eq(labels, {})
+    H.eq(current(mine), "master")
+    H.git(mine, { "checkout", "-q", "topic" })
+    local behind = H.commit(mine, "more", { ["more.txt"] = { "more" } })
+    H.git(mine, { "update-ref", "refs/remotes/origin/topic", behind })
+    H.commit(mine, "even more", { ["more.txt"] = { "even more" } })
+    view = open_log()
+    local short = behind:sub(1, 7)
+    _, labels = checkout(view, mine, behind)
+    H.eq(labels, { short .. ", detached (no branch)", "+ a new branch at " .. short })
+  end)
+
+  H.it("any other commit: detached, then a new branch there (not detached again)", function()
+    local _, mine = setup()
+    local first = rev(mine, "topic")
+    H.git(mine, { "checkout", "-q", "topic" })
+    local inner = H.commit(mine, "inner", { ["inner.txt"] = { "inner" } })
+    H.commit(mine, "tip", { ["tip.txt"] = { "tip" } })
+    local short = inner:sub(1, 7)
+    local view = open_log()
+    local said, labels = checkout(view, mine, inner, "detached")
+    H.eq(labels, { short .. ", detached (no branch)", "+ a new branch at " .. short })
+    H.eq(vim.trim(H.git(mine, { "rev-parse", "--abbrev-ref", "HEAD" })), "HEAD", "detached")
+    H.eq(rev(mine, "HEAD"), inner)
+    H.ok(said:find("switched to " .. short, 1, true), said)
+    said, labels = checkout(view, mine, inner, "+ a new branch", "bad..name")
+    H.eq(labels, { "+ a new branch at " .. short }, "already there: not offered")
+    H.ok(said:find("not a branch name", 1, true), said)
+    checkout(view, mine, inner, "+ a new branch", "from-inner")
+    H.eq({ current(mine), rev(mine, "HEAD") }, { "from-inner", inner })
+    checkout(view, mine, first, "+ a new branch", "from-first")
+    H.eq({ current(mine), rev(mine, "HEAD") }, { "from-first", first }, "-c name sha: at that commit")
+  end)
+
+  H.it("changes in the way: the question names the commit; Working tree / Index rows do nothing", function()
+    local _, mine = setup()
+    H.git(mine, { "checkout", "-q", "topic" })
+    local inner = H.commit(mine, "inner", { ["f.txt"] = { "inner", "b", "c", "d", "e", "f", "g", "h" } })
+    H.commit(mine, "tip", { ["f.txt"] = { "tip", "b", "c", "d", "e", "f", "g", "h" } })
+    H.write(mine, "f.txt", { "tip", "b", "c", "d", "e", "f", "g", "CHANGED" })
+    local view = open_log()
+    asked, confirm_answer = {}, 1
+    local said = checkout(view, mine, inner, "detached")
+    local question = table.concat(asked, "\n")
+    H.ok(question:find("Stash them, switch to " .. inner:sub(1, 7) .. ",", 1, true), question)
+    H.eq(rev(mine, "HEAD"), inner)
+    H.eq(H.read(mine, "f.txt"), "inner\nb\nc\nd\ne\nf\ng\nCHANGED\n")
+    H.ok(said:find("your changes with you", 1, true), said)
+    local opened = false
+    local select = vim.ui.select
+    vim.ui.select = function()
+      opened = true
+    end
+    for _, line in ipairs({ 1, 2 }) do
+      api.nvim_set_current_win(view.layout.log_win)
+      api.nvim_win_set_cursor(view.layout.log_win, { line, 0 })
+      view:dispatch("checkout", { buf = view.log.buf, win = view.layout.log_win })
+    end
+    vim.ui.select = select
+    H.eq(opened, false)
+    H.eq(rev(mine, "HEAD"), inner)
+  end)
+end)
+
 H.done()

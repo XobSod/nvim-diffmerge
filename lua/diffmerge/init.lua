@@ -161,9 +161,7 @@ function M.switch(args)
   if not repo then
     return
   end
-  local function done()
-    require("diffmerge.view").refresh_repo(repo, { log = true })
-  end
+  local done = require("diffmerge.branch").refresher(repo)
   if args and #args > 0 then
     require("diffmerge.branch").switch(repo, args, done)
   else

@@ -113,6 +113,7 @@ M.defaults = {
       ["P"] = "cycle_parent",
       ["K"] = "commit_details",
       ["Y"] = "yank_hash",
+      ["b"] = "checkout",
       ["F"] = "toggle_first_parent",
       ["a"] = "toggle_all_branches",
       ["f"] = "filter",

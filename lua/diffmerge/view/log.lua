@@ -246,6 +246,9 @@ function LogView:load()
       util.err("git log: " .. vim.trim(err))
     end
   end)
+  -- where the new lines put the cursor: not the user moving it
+  local win = self.layout.log_win
+  self.auto_line = util.win_valid(win) and api.nvim_win_get_cursor(win)[1] or nil
   self.log:set_winbar(self:log_title())
   self.log:draw_marks({})
 end
@@ -725,7 +728,6 @@ function LogView:action_filter(ctx)
 end
 
 function LogView:reload()
-  self.current_before_reload = self.current
   self.selected_line = nil
   self.current = nil
   self:load()

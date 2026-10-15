@@ -61,6 +61,74 @@ local panel_win_opts = {
   colorcolumn = "",
 }
 
+-- what a new tab copies from the window it is opened from (a panel's look, when opened from
+-- one): your values are taken from one of your windows
+local display_opts = vim.list_extend(vim.tbl_filter(function(name)
+  return name ~= "winfixbuf"
+end, vim.tbl_keys(panel_win_opts)), { "foldmethod", "foldenable", "cursorlineopt" })
+
+--- A window of yours (not one of a view, not floating, not pinned to its buffer like the
+--- commit message; one with a file rather than help, a terminal or a list), to take window
+--- options from: the current one, the one before it (e.g. a float was opened from), else one of
+--- this tab, the tab before, any.
+local function own_window()
+  local theirs = {}
+  for _, view in pairs(require("diffmerge.view").views) do
+    local l = view.layout
+    for _, w in pairs(l.wins or {}) do
+      theirs[w] = true
+    end
+    if l.files_win then
+      theirs[l.files_win] = true
+    end
+    if l.log_win then
+      theirs[l.log_win] = true
+    end
+  end
+  local tabs = { api.nvim_get_current_tabpage() }
+  local before = vim.fn.tabpagenr("#")
+  if before > 0 then
+    tabs[#tabs + 1] = api.nvim_list_tabpages()[before]
+  end
+  vim.list_extend(tabs, api.nvim_list_tabpages())
+  local candidates = { api.nvim_get_current_win() }
+  local previous = vim.fn.win_getid(vim.fn.winnr("#"))
+  if previous ~= 0 then
+    candidates[#candidates + 1] = previous
+  end
+  for _, tab in ipairs(tabs) do
+    vim.list_extend(candidates, api.nvim_tabpage_list_wins(tab))
+  end
+  local any
+  for _, w in ipairs(candidates) do
+    if not theirs[w] and api.nvim_win_get_config(w).relative == "" and not vim.wo[w].winfixbuf then
+      if vim.bo[api.nvim_win_get_buf(w)].buftype == "" then
+        return w, true
+      end
+      any = any or w
+    end
+  end
+  return any, false
+end
+
+-- your window options as last seen (only views open: none of your windows to take them from)
+local yours
+
+--- The window options of `win` as in `from` (one of yours), not a panel's; a floating window's
+--- highlights neither. `from` not a file's window (help, a terminal): what was seen in one before.
+local function own_opts(win, from, file)
+  vim.wo[win].winhighlight = ""
+  if from and (file or not yours) then
+    yours = {}
+    for _, name in ipairs(display_opts) do
+      yours[name] = api.nvim_get_option_value(name, { win = from })
+    end
+  end
+  for name, value in pairs(yours or {}) do
+    vim.wo[win][name] = value
+  end
+end
+
 function M.panel_opts(win, extra)
   for k, v in pairs(panel_win_opts) do
     vim.wo[win][k] = v
@@ -74,6 +142,7 @@ end
 ---@param opts { kind: "diff"|"merge", name?: string, files?: boolean }
 ---@return diffmerge.Layout
 function M.new(opts)
+  local from, file = own_window()
   vim.cmd("tabnew")
   local self = setmetatable({
     tab = api.nvim_get_current_tabpage(),
@@ -83,6 +152,7 @@ function M.new(opts)
     roles = {},
   }, Layout)
   local main = api.nvim_get_current_win()
+  own_opts(main, from, file)
   vim.bo[api.nvim_get_current_buf()].bufhidden = "wipe"
   if opts.files then
     self:open_files(main)

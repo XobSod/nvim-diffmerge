@@ -226,4 +226,113 @@ H.describe("paths", function()
   end)
 end)
 
+H.describe("windows", function()
+  H.it("a view opened from a panel has your window options, not the panel's", function()
+    local dir = H.repo({ ["a.txt"] = { "a" } })
+    H.commit(dir, "second", { ["a.txt"] = { "a2" } })
+    vim.cmd.cd(dir)
+    -- (one window of yours: the views of other tests closed)
+    vim.cmd("tabnew")
+    vim.cmd("tabonly")
+    vim.wo.number, vim.wo.list, vim.wo.cursorline = true, true, false
+    local status = require("diffmerge").log()
+    vim.wait(3000, function()
+      return status.log and not status.log.loading
+    end, 10)
+    for _, panel in ipairs({ status.layout.files_win, status.layout.log_win }) do
+      api.nvim_set_current_win(panel)
+      local view = require("diffmerge").diff({ "HEAD~1" })
+      for _, win in ipairs(view.layout:diff_wins()) do
+        H.eq({ vim.wo[win].number, vim.wo[win].list, vim.wo[win].cursorline }, { true, true, false })
+      end
+      view:close()
+    end
+  end)
+
+  H.it("your options from the tab you came from; a window pinned to its buffer is no trouble", function()
+    local dir = H.repo({ ["a.txt"] = { "a" } })
+    H.commit(dir, "second", { ["a.txt"] = { "a2" } })
+    vim.cmd.cd(dir)
+    vim.cmd("tabnew")
+    vim.cmd("tabonly")
+    vim.wo.spell, vim.wo.number = true, false
+    vim.cmd("tabnew")
+    local tab, mine = api.nvim_get_current_tabpage(), api.nvim_get_current_win()
+    vim.wo.spell, vim.wo.number = false, true
+    -- (above it: a window pinned to its buffer, like the commit message)
+    vim.cmd("split")
+    vim.wo.spell, vim.wo.number, vim.wo.winfixbuf = true, false, true
+    local function yours(view)
+      for _, win in ipairs(view.layout:diff_wins()) do
+        H.eq({ vim.wo[win].spell, vim.wo[win].number, vim.wo[win].winfixbuf }, { false, true, false })
+      end
+      view:close()
+    end
+    local ok, view = pcall(require("diffmerge").diff, { "HEAD~1" })
+    H.ok(ok, view)
+    yours(view)
+    api.nvim_set_current_tabpage(tab)
+    api.nvim_set_current_win(mine)
+    local status = require("diffmerge").status()
+    api.nvim_set_current_win(status.layout.files_win)
+    yours(require("diffmerge").diff({ "HEAD~1" }))
+    status:close()
+    for _, w in ipairs(api.nvim_list_wins()) do
+      vim.wo[w].winfixbuf = false
+    end
+  end)
+
+  H.it("the window you are in first; only views open: your options as last seen; a float's highlights", function()
+    local dir = H.repo({ ["a.txt"] = { "a" } })
+    H.commit(dir, "second", { ["a.txt"] = { "a2" } })
+    vim.cmd.cd(dir)
+    vim.cmd("tabnew")
+    vim.cmd("tabonly")
+    vim.wo.spell, vim.wo.number, vim.wo.cursorline = false, true, false
+    -- (left of it, first in the tab: another window of yours)
+    vim.cmd("vsplit")
+    vim.wo.spell, vim.wo.number = true, false
+    vim.cmd("wincmd l")
+    local function yours(view)
+      for _, win in ipairs(view.layout:diff_wins()) do
+        H.eq({ vim.wo[win].spell, vim.wo[win].number, vim.wo[win].cursorline }, { false, true, false })
+      end
+    end
+    local first = require("diffmerge").diff({ "HEAD~1" })
+    yours(first)
+    first:close()
+    local float = api.nvim_open_win(api.nvim_create_buf(false, true), true, { relative = "editor", row = 1, col = 1, width = 10, height = 2 })
+    vim.wo[float].winhighlight = "Normal:ErrorMsg"
+    local status = require("diffmerge").log()
+    vim.wait(3000, function()
+      return not status.log.loading
+    end, 10)
+    yours(status)
+    H.eq(vim.wo[status.layout.files_win].winhighlight, "")
+    api.nvim_win_close(float, true)
+    -- the file panel hidden, the log shown; and no window of yours left
+    vim.cmd("tabonly")
+    status:toggle_files()
+    api.nvim_set_current_win(status.layout.log_win)
+    yours(require("diffmerge").diff({ "HEAD~1" }))
+    -- no window before the current one (the log it came from hidden)
+    api.nvim_set_current_tabpage(status.layout.tab)
+    status:toggle_files()
+    api.nvim_set_current_win(status.layout.log_win)
+    api.nvim_set_current_win(status.layout.files_win)
+    status:hide_log()
+    H.eq({ api.nvim_get_current_win(), vim.fn.winnr("#") }, { status.layout.files_win, 0 })
+    yours(require("diffmerge").diff({ "HEAD~1" }))
+    -- the only other window: help (not a file's): your options as last seen still
+    vim.cmd("tab help")
+    vim.wo.number = false
+    api.nvim_set_current_tabpage(status.layout.tab)
+    api.nvim_set_current_win(status.layout.files_win)
+    -- (a buffer never shown before: one shown again has its window options back)
+    H.commit(dir, "third", { ["a.txt"] = { "a3" } })
+    local view = require("diffmerge").diff({ "HEAD~1", "HEAD" })
+    H.eq(vim.wo[view.layout.wins.b].number, true)
+  end)
+end)
+
 H.done()

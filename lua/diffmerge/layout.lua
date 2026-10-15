@@ -1,5 +1,5 @@
 --- Window arrangement of a view: optional file panel (left), optional log panel (bottom,
---- full width) and the diff windows in the remaining area.
+--- full width, shown and hidden as you go) and the diff windows in the remaining area.
 local config = require("diffmerge.config")
 local util = require("diffmerge.util")
 
@@ -70,8 +70,8 @@ function M.panel_opts(win, extra)
   end
 end
 
---- Creates a new tabpage with the requested panels.
----@param opts { kind: "diff"|"merge", name?: string, files?: boolean, log?: boolean }
+--- Creates a new tabpage with the requested panels (the log panel is opened later).
+---@param opts { kind: "diff"|"merge", name?: string, files?: boolean }
 ---@return diffmerge.Layout
 function M.new(opts)
   vim.cmd("tabnew")
@@ -84,18 +84,46 @@ function M.new(opts)
   }, Layout)
   local main = api.nvim_get_current_win()
   vim.bo[api.nvim_get_current_buf()].bufhidden = "wipe"
-  if opts.log then
-    vim.cmd("botright " .. config.options.log_panel.height .. "split")
-    self.log_win = api.nvim_get_current_win()
-    api.nvim_win_set_buf(self.log_win, scratch_placeholder())
-    vim.wo[self.log_win].winfixheight = true
-    api.nvim_set_current_win(main)
-  end
   if opts.files then
     self:open_files(main)
   end
   self:build(main)
   return self
+end
+
+--- Opens the log window across the bottom of the tab (above `above`, e.g. the commit message,
+--- when given), a placeholder buffer in it; the current window stays current.
+---@param above? integer
+function Layout:open_log(above)
+  local from = api.nvim_get_current_win()
+  local height = config.options.log_panel.height
+  if util.win_valid(above) then
+    api.nvim_set_current_win(above)
+    vim.cmd("aboveleft " .. height .. "split")
+  else
+    vim.cmd("botright " .. height .. "split")
+  end
+  self.log_win = api.nvim_get_current_win()
+  api.nvim_win_set_buf(self.log_win, scratch_placeholder())
+  vim.wo[self.log_win].winfixheight = true
+  api.nvim_set_current_win(from)
+end
+
+--- Whether the log window is the only one of the tab (then it cannot go).
+function Layout:log_alone()
+  local others = vim.tbl_filter(function(w)
+    return w ~= self.log_win and api.nvim_win_get_config(w).relative == ""
+  end, api.nvim_tabpage_list_wins(self.tab))
+  return #others == 0
+end
+
+--- Closes the log window (its buffer stays).
+function Layout:close_log()
+  if util.win_valid(self.log_win) then
+    pcall(api.nvim_win_close, self.log_win, true)
+  end
+  self.log_win = nil
+  self:equalize()
 end
 
 function Layout:open_files(from)
@@ -147,9 +175,12 @@ function Layout:build(first)
 end
 
 function Layout:equalize()
-  api.nvim_win_call(self.wins[self.roles[1]], function()
-    vim.cmd("wincmd =")
-  end)
+  local first = self.wins[self.roles[1]]
+  if util.win_valid(first) then
+    api.nvim_win_call(first, function()
+      vim.cmd("wincmd =")
+    end)
+  end
   if util.win_valid(self.files_win) then
     api.nvim_win_set_width(self.files_win, config.options.file_panel.width)
   end

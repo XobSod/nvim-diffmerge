@@ -53,7 +53,7 @@ function M.current()
 end
 
 --- Creates the tabpage and panels.
----@param opts { kind?: "diff"|"merge", files?: boolean, log?: boolean, title?: string }
+---@param opts { kind?: "diff"|"merge", files?: boolean, title?: string }
 function View.new(class, repo, opts)
   opts = opts or {}
   local self = setmetatable({
@@ -63,7 +63,7 @@ function View.new(class, repo, opts)
     title = opts.title,
     augroup = api.nvim_create_augroup("DiffMergeView" .. tostring(math.random(1e9)), { clear = true }),
   }, class)
-  self.layout = layout_mod.new({ kind = opts.kind or "diff", files = opts.files, log = opts.log })
+  self.layout = layout_mod.new({ kind = opts.kind or "diff", files = opts.files })
   M.views[self.layout.tab] = self
   if opts.files then
     self.files = require("diffmerge.panel.files").new(self)
@@ -85,7 +85,9 @@ function View:attach_files_panel()
     local handler = function(action, ctx)
       (M.current() or self):dispatch(action, ctx)
     end
-    keymaps.apply(buf, "view", handler)
+    keymaps.apply(buf, "view", handler, function(action)
+      return self:supports(action, "view")
+    end)
     keymaps.apply(buf, "file_panel", handler, function(action)
       return self:supports(action, "file_panel")
     end)
@@ -106,16 +108,14 @@ function View:attach_files_panel()
   end
 end
 
---- The status and diff views of `repo` show it anew (after a commit, fetch, pull, push); log
---- views keep what you marked there (R reloads them), unless HEAD went to another branch
---- (`opts.log`: its history is another).
----@param opts? { log?: boolean }
-function M.refresh_repo(repo, opts)
+--- The status and diff views of `repo` show it anew (after a commit, fetch, pull, push,
+--- switch); the logs of status views reload when the branches moved.
+function M.refresh_repo(repo)
   for _, view in pairs(M.views) do
     if view.repo and view.repo.root == repo.root and not view.cleaned and view.layout:is_valid() then
-      if view.kind_name == "status" then
+      if view.after_change then
         view:after_change()
-      elseif view.kind_name == "diff" or (opts and opts.log and view.log) then
+      elseif view.kind_name == "diff" then
         view:refresh()
       end
     end
@@ -164,6 +164,9 @@ M.source_fingerprint = source_fingerprint
 
 --- Updates the file panel with new sections, keeping the current entry when possible.
 ---@param data { title: string, subtitle?: string, sections: diffmerge.Section[], empty_text?: string }
+---@param opts? { focus?: boolean, switch?: boolean }
+---   switch: other sections than before (the status, a commit of the log): a file of the old
+---   ones is not kept on screen
 function View:set_sections(data, opts)
   opts = opts or {}
   self.sections = data.sections
@@ -203,7 +206,13 @@ function View:set_sections(data, opts)
   if self.files then
     self.files:render()
   end
-  if not match and previous and self.layout:complete() and self.layout:role_of(api.nvim_get_current_win()) then
+  if
+    not match
+    and not opts.switch
+    and previous
+    and self.layout:complete()
+    and self.layout:role_of(api.nvim_get_current_win())
+  then
     -- the file being edited no longer differs (e.g. saved identical to the index):
     -- keep it on screen instead of switching files under the cursor
     return
@@ -218,6 +227,7 @@ end
 
 --- Shows empty buffers when there is nothing to compare.
 function View:show_nothing()
+  local cur_win = api.nvim_get_current_win()
   self:detach_entry()
   self.current = nil
   self.layout:set("diff", self.layout_names.diff or config.options.layout.diff)
@@ -232,8 +242,22 @@ function View:show_nothing()
   end
   self:release_infos()
   self.infos = infos
+  local handler = function(action, ctx)
+    (M.current() or self):dispatch(action, ctx)
+  end
+  for _, info in pairs(infos) do
+    keymaps.apply(info.buf, "view", handler, function(action)
+      return self:supports(action, "view")
+    end)
+  end
   if self.files then
     self.files:render()
+  end
+  -- (the diff windows may have been made anew)
+  if util.win_valid(cur_win) then
+    api.nvim_set_current_win(cur_win)
+  else
+    self:focus_main()
   end
 end
 
@@ -427,7 +451,9 @@ function View:show_entry(entry, opts)
     (M.current() or self):dispatch(action, ctx)
   end
   for _, info in pairs(infos) do
-    keymaps.apply(info.buf, "view", handler)
+    keymaps.apply(info.buf, "view", handler, function(action)
+      return self:supports(action, "view")
+    end)
     if kind == "merge" then
       keymaps.apply(info.buf, "merge", handler)
     else

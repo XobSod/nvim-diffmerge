@@ -83,7 +83,10 @@ H.describe("switching branches", function()
     local _, mine = setup()
     local view = open()
     local _, labels = pick(view, mine, "nothing like this")
-    H.ok(labels[1]:match("^%* master"), labels[1])
+    -- (most recent first: topic is newer, or of the same second)
+    H.ok(vim.iter(labels):any(function(l)
+      return l:match("^%* master")
+    end), vim.inspect(labels))
     H.ok(vim.iter(labels):any(function(l)
       return l:match("^  topic")
     end), vim.inspect(labels))
@@ -542,7 +545,7 @@ H.describe("checking out a commit of the log", function()
     H.eq({ current(mine), rev(mine, "HEAD") }, { "from-first", first }, "-c name sha: at that commit")
   end)
 
-  H.it("changes in the way: the question names the commit; Working tree / Index rows do nothing", function()
+  H.it("changes in the way: the question names the commit; Working tree / Index rows: the picker", function()
     local _, mine = setup()
     H.git(mine, { "checkout", "-q", "topic" })
     local inner = H.commit(mine, "inner", { ["f.txt"] = { "inner", "b", "c", "d", "e", "f", "g", "h" } })
@@ -556,10 +559,10 @@ H.describe("checking out a commit of the log", function()
     H.eq(rev(mine, "HEAD"), inner)
     H.eq(H.read(mine, "f.txt"), "inner\nb\nc\nd\ne\nf\ng\nCHANGED\n")
     H.ok(said:find("your changes with you", 1, true), said)
-    local opened = false
+    local prompts = {}
     local select = vim.ui.select
-    vim.ui.select = function()
-      opened = true
+    vim.ui.select = function(_, opts)
+      prompts[#prompts + 1] = opts.prompt
     end
     for _, line in ipairs({ 1, 2 }) do
       api.nvim_set_current_win(view.layout.log_win)
@@ -567,7 +570,7 @@ H.describe("checking out a commit of the log", function()
       view:dispatch("checkout", { buf = view.log.buf, win = view.layout.log_win })
     end
     vim.ui.select = select
-    H.eq(opened, false)
+    H.eq(prompts, { "Switch to", "Switch to" })
     H.eq(rev(mine, "HEAD"), inner)
   end)
 end)

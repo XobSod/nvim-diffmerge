@@ -214,15 +214,6 @@ local function not_now(repo)
   end
 end
 
---- An on_done for switches: the views of `repo` show it anew; log views reload only when HEAD
---- went elsewhere (else they keep what you marked).
-function M.refresher(repo)
-  local before = position(repo)
-  return function()
-    require("diffmerge.view").refresh_repo(repo, { log = position(repo) ~= before })
-  end
-end
-
 --- `git switch <args>`. Not during a merge, rebase or commit; files with unsaved changes have to
 --- be saved first; while another git operation runs: offered to stop it. Uncommitted changes in
 --- the way: offered to stash them, switch, and pop them there; untracked files in the way are

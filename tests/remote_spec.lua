@@ -224,7 +224,7 @@ H.describe("fetch / pull / push", function()
     H.ok(finished(mine), "git finished")
     H.eq(head(origin, "master"), before, "dry run")
   end)
-  H.it("F, p, P in the status view's file panel only; a clean tree starts there", function()
+  H.it("F, p, P in the status view's panels only; a clean tree starts there", function()
     local _, mine = setup()
     local view = require("diffmerge").status()
     H.eq(api.nvim_get_current_win(), view.layout.files_win, "clean: the cursor in the file panel")
@@ -241,7 +241,11 @@ H.describe("fetch / pull / push", function()
     H.eq(mapped(diff.files.buf, "P"), nil, "not in a diff view")
     vim.cmd("DiffMerge log")
     local log = require("diffmerge").current()
-    H.ok((mapped(log.log.buf, "F") or ""):find("first%-parent"), mapped(log.log.buf, "F"))
+    H.eq(log, view, "the status view, its log shown")
+    for _, lhs in ipairs({ "F", "p", "P" }) do
+      H.ok((mapped(log.log.buf, lhs) or ""):find("git", 1, true), lhs)
+    end
+    H.ok((mapped(log.log.buf, "gF") or ""):find("first%-parent"), mapped(log.log.buf, "gF"))
     local _ = mine
   end)
 
@@ -315,13 +319,29 @@ H.describe("fetch / pull / push", function()
       api.nvim_win_set_cursor(log.layout.log_win, { row, 0 })
       log:dispatch("mark", { buf = log.log.buf, win = log.layout.log_win })
     end
-    local marks = vim.deepcopy(log.marks)
+    local function marked()
+      return vim.tbl_map(function(m)
+        return m.id
+      end, log.marks)
+    end
+    local marks = marked()
     H.eq(#marks, 2, "two rows marked")
     H.commit(theirs, "theirs", { ["g.txt"] = { "g" } })
     H.git(theirs, { "push", "-q" })
-    local view = open()
-    press(view, "fetch", mine)
-    H.eq(log.marks, marks, "marks kept")
+    local function commits()
+      return #vim.tbl_filter(function(r)
+        return r.kind == "commit"
+      end, log.log.rows)
+    end
+    local before = commits()
+    api.nvim_set_current_win(log.layout.log_win)
+    log:dispatch("fetch", { buf = log.log.buf, win = log.layout.log_win })
+    H.ok(finished(mine), "git finished")
+    vim.wait(3000, function()
+      return not log.log.loading
+    end, 10)
+    H.eq(commits(), before + 1, "the log reloaded: the fetched commit")
+    H.eq(marked(), marks, "marks kept")
     -- a branch pushed to the remote named: not asked to track
     H.git(mine, { "config", "push.default", "current" })
     H.git(mine, { "checkout", "-q", "-b", "topic" })

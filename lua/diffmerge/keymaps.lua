@@ -9,6 +9,7 @@ M.descriptions = {
   next_file = "Next file",
   prev_file = "Previous file",
   cycle_layout = "Cycle layout",
+  toggle_log = "Show / hide the log panel",
   toggle_whitespace = "Toggle ignoring whitespace changes (diffopt iwhite)",
   help = "Show keymaps",
   toggle_stage_hunk = "Stage / unstage hunk (visual: selected lines)",
@@ -48,7 +49,7 @@ M.descriptions = {
   cycle_parent = "Cycle parent of a merge commit",
   commit_details = "Commit details",
   yank_hash = "Yank commit hash",
-  checkout = "Check out the commit (its branch; else one following a remote branch, detached, a new one)",
+  checkout = "Check out the commit: its branch, else asks how (Working tree / Index row: switch branch)",
   toggle_first_parent = "Toggle --first-parent",
   toggle_all_branches = "Toggle all branches / HEAD only",
   filter = "Filter log (git log arguments)",
@@ -66,6 +67,17 @@ M.visual = {
 
 ---@type table<integer, { mode: string, lhs: string, saved?: table, desc: string }[]>
 local records = {}
+
+--- The key of `action` in `group` (the shortest, if several), for hints; nil: none.
+function M.key_for(group, action)
+  local found
+  for lhs, a in pairs(config.options.keymaps[group] or {}) do
+    if a == action and (not found or #lhs < #found or (#lhs == #found and lhs < found)) then
+      found = lhs
+    end
+  end
+  return found
+end
 
 --- Sets buffer-local mappings for `group` from the config.
 ---@param handler fun(action: string, ctx: table)

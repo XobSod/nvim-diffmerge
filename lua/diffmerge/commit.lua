@@ -84,6 +84,9 @@ function M.edit(file)
   end)
   api.nvim_win_set_buf(win, buf)
   vim.wo[win].winfixbuf = true
+  -- (panels shown or hidden meanwhile leave its height alone)
+  vim.wo[win].winfixheight = true
+  state.win = win
   if here then
     api.nvim_set_current_win(win)
     api.nvim_win_set_cursor(win, { 1, 0 })
@@ -145,6 +148,15 @@ function M.message_tab()
   local state = running and running.editing
   if state and not state.done and running.tab and api.nvim_tabpage_is_valid(running.tab) then
     return running.tab
+  end
+end
+
+--- The window of a message being edited in `tab`, if any.
+function M.message_window(tab)
+  local state = running and running.editing
+  local win = state and not state.done and state.win
+  if win and api.nvim_win_is_valid(win) and api.nvim_win_get_tabpage(win) == tab then
+    return win
   end
 end
 

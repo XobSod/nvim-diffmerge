@@ -7,7 +7,7 @@ dependencies, Neovim 0.12+.
   `HEAD | WORKING TREE | INDEX` (only the columns that differ); `<Space>` toggles the line
   under the cursor between unstaged and staged (lazygit style), `-` the hunk, visual mode the
   selection — the change stays in view and changes colour; `X` discards it. Opened from a file,
-  it shows that file at the cursor's line.
+  it shows that file at the cursor's line. The log of the repository goes below it (`gL`).
 - **Stashing what you staged** — `s` stashes the staged lines and hunks only (also next to
   unstaged changes, where `git stash --staged` fails), files, or everything; stashes are listed
   below the changes and open like changes, read-only; apply, pop, drop.
@@ -27,9 +27,10 @@ dependencies, Neovim 0.12+.
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),
   undo just works; `<leader>1` / `<leader>3` in the file panel take a side for the whole file.
   Layouts: `mine | merged | other` (side by side or stacked) and `mine | base | other / merged`.
-- **Log & history** — `git log --graph` with git's colours; preview commits; mark two rows
-  (`m` `m`: `git diff A B`, `t`: `A...B`) or select a range (`V` … `<CR>`: combined changes);
-  Working tree / Index rows; file, directory and line (`-L`) history.
+- **Log & history** — `git log --graph` with git's colours, in the status view: its Working
+  tree row is the status, a commit shows what it changed; mark two rows (`m` `m`: `git diff A
+  B`, `t`: `A...B`) or select a range (`V` … `<CR>`: combined changes); it follows commits,
+  fetches and switches, keeping your place; file, directory and line (`-L`) history.
 - **git difftool / mergetool** — files and `--dir-diff` directories; proper exit codes.
 - **Any two files or directories** — `nvim -c "DiffMerge compare" -- old new` (e.g. as a
   shell alias), both sides editable.

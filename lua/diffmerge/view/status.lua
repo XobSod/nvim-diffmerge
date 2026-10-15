@@ -1,4 +1,6 @@
---- Status view: what `git status` shows, as Conflicts / Staged / Unstaged / Untracked sections.
+--- Status view: what `git status` shows, as Conflicts / Staged / Unstaged / Untracked sections,
+--- with the log of the repository below (view/log.lua): its Working tree row shows the status,
+--- its Index row what a commit takes, a commit what it changed (read-only).
 ---   Staged    HEAD  -> index         (git diff --staged)
 ---   Unstaged  index -> working tree  (git diff)
 ---   Untracked nothing -> working tree
@@ -19,6 +21,10 @@ local StatusView = setmetatable({}, { __index = views.View })
 StatusView.__index = StatusView
 M.StatusView = StatusView
 
+for name, fn in pairs(require("diffmerge.view.log").methods) do
+  StatusView[name] = fn
+end
+
 local conflict_desc = {
   DD = "both deleted",
   AU = "added by us",
@@ -37,31 +43,69 @@ local function literal(paths)
   return out
 end
 
+local function has_changes(counts)
+  return counts ~= nil and counts.unstaged + counts.staged + counts.untracked + counts.conflicts > 0
+end
+
+--- Opens the status view: the main one of a repository (`:DiffMerge`; `:DiffMerge log` shows
+--- its log), or one of its own for `:DiffMerge log <args>` / `history <path>`: the log and the
+--- status of those paths only.
 ---@param repo diffmerge.Repo
----@param opts? { conflicts?: boolean, focus?: { abs: string, line: integer } }
+---@param opts? { mode?: "status"|"log"|"history", args?: string[], path?: string, range?: integer[], conflicts?: boolean, focus?: { abs: string, line: integer } }
+---   mode: "status" (default): the working tree, the log as it was (a new view: hidden); "log",
+---   "history": with the log shown (a new view: on the working tree when it has changes, else
+---   on HEAD)
 ---   focus: the file (and line) to show, e.g. the buffer the view was opened from
 function M.open(repo, opts)
   opts = opts or {}
+  local mode = opts.mode or "status"
+  local main = mode == "status" or (mode == "log" and #(opts.args or {}) == 0)
   local self
-  for tab, v in pairs(views.views) do
-    if v.kind_name == "status" and v.repo.root == repo.root and api.nvim_tabpage_is_valid(tab) then
-      api.nvim_set_current_tabpage(tab)
-      v:refresh()
-      self = v
+  if main then
+    for tab, v in pairs(views.views) do
+      if v.main and v.repo.root == repo.root and api.nvim_tabpage_is_valid(tab) then
+        api.nvim_set_current_tabpage(tab)
+        self = v
+      end
     end
   end
   local fresh = not self
   if fresh then
     self = views.View.new(StatusView, repo, { files = true, kind = "diff" })
-    self.kind_name = "status"
+    self.kind_name = main and "status" or mode
+    self.main = main
+    self:init_log({ args = opts.args, path = opts.path, range = opts.range, history = mode == "history" })
+    self.shows, self.selected_id = "worktree", "worktree"
     self:setup_watchers()
     self:refresh()
+    if mode ~= "status" then
+      if self.line_range or not has_changes(self.counts) then
+        -- nothing to stage there: the newest commit (HEAD) instead
+        self.selected_id = nil
+      end
+      self:show_log()
+    end
+  else
+    if mode == "status" and (self.shows ~= "worktree" or self.selected_id ~= "worktree" or #self.marks > 0) then
+      self:select_worktree()
+    else
+      self:refresh()
+    end
+    if mode ~= "status" then
+      if not self.log and self.shows == "worktree" and not has_changes(self.counts) then
+        -- the log shown for the first time, nothing to stage: on HEAD, as a new view
+        self.selected_id = nil
+      end
+      self:show_log()
+    end
   end
   if opts.focus and self:focus_file(opts.focus, opts.conflicts) then
     return self
   end
   if opts.conflicts then
     self:show_first_conflict()
+  elseif mode ~= "status" and self:log_shown() then
+    api.nvim_set_current_win(self.layout.log_win)
   elseif fresh then
     -- start in the file panel, like `git status` (also when it is clean: F, p, P are there)
     api.nvim_set_current_win(self.layout.files_win)
@@ -70,6 +114,51 @@ function M.open(repo, opts)
     end
   end
   return self
+end
+
+--- Shows the status in the file panel: all of it ("worktree") or what a commit takes ("index":
+--- Conflicts and Staged).
+---@param which "worktree"|"index"
+function StatusView:show_status(which)
+  self.shows, self.selected_id, self.cmp = which, which, nil
+  self:refresh()
+end
+
+--- Back to the working tree (`:DiffMerge`): marks and a selected range of the log go.
+function StatusView:select_worktree()
+  self:user_chose()
+  self.marks, self.range = {}, nil
+  self:redraw_marks()
+  self:show_status("worktree")
+  local line = self:line_of_id("worktree")
+  if line and self:log_shown() then
+    self:cursor_to(line)
+  end
+end
+
+--- The status as the selection shows it: all of it, or (the Index row) what a commit takes.
+function StatusView:shown_status(data)
+  if self.shows ~= "index" then
+    return data
+  end
+  local keep = { conflicts = true, staged = true }
+  return {
+    title = data.title,
+    subtitle = data.operation or "git diff --staged",
+    sections = vim.tbl_filter(function(s)
+      return keep[s.id]
+    end, data.sections),
+    empty_text = "Nothing staged",
+  }
+end
+
+--- A commit (or another comparison of the log) is shown: nothing there to stage or discard.
+function StatusView:read_only()
+  if self.shows == "comparison" then
+    util.info("read-only: select the Working tree row to stage")
+    return true
+  end
+  return false
 end
 
 --- Shows a file of the status (if it has changes) with the cursor on `line` of its working
@@ -129,10 +218,21 @@ function StatusView:show_first_conflict()
   return false
 end
 
+--- `args` limited to the paths of the view (`:DiffMerge history <path>`, `log -- <paths>`).
+function StatusView:in_paths(args)
+  local paths = self.paths or {}
+  if #paths > 0 then
+    args[#args + 1] = "--"
+    util.extend(args, paths)
+  end
+  return args
+end
+
+--- The status (also kept as `self.status`), with the counts of the log's pseudo rows.
 ---@param changed? boolean after a staging action (see after_change)
 function StatusView:collect(changed)
   local repo = self.repo
-  local out, err = git.output(repo, { "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all" })
+  local out, err = git.output(repo, self:in_paths({ "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all" }))
   if not out then
     util.err("git status failed: " .. (err or ""))
     return nil
@@ -143,11 +243,26 @@ function StatusView:collect(changed)
     head = nil
   end
   self.head = head
-  local unstaged_stats = parse.numstat(git.output(repo, { "diff", "--numstat", "-z", "--no-ext-diff" }) or "")
+  self.branch_id = (st.branch["branch.head"] or "") .. "@" .. (head or "")
+  local unstaged_stats = parse.numstat(git.output(repo, self:in_paths({ "diff", "--numstat", "-z", "--no-ext-diff" })) or "")
   local staged_stats = parse.numstat(
-    git.output(repo, { "diff", "--cached", "--numstat", "-z", "--no-ext-diff", "-M", head or git.empty_tree(repo) })
-      or ""
+    git.output(
+      repo,
+      self:in_paths({ "diff", "--cached", "--numstat", "-z", "--no-ext-diff", "-M", head or git.empty_tree(repo) })
+    ) or ""
   )
+  local counts = { unstaged = 0, staged = 0, untracked = 0, conflicts = 0 }
+  for _, e in ipairs(st.entries) do
+    if e.kind == "untracked" then
+      counts.untracked = counts.untracked + 1
+    elseif e.kind == "unmerged" then
+      counts.conflicts = counts.conflicts + 1
+    else
+      counts.staged = counts.staged + (e.x ~= "." and 1 or 0)
+      counts.unstaged = counts.unstaged + (e.y ~= "." and 1 or 0)
+    end
+  end
+  self.counts = counts
 
   local sections = {
     conflicts = { id = "conflicts", title = "Conflicts", hint = "unmerged", entries = {} },
@@ -259,19 +374,23 @@ function StatusView:collect(changed)
     end
   end
   local op = git.operation(repo)
-  local subtitle = "git status"
+  local operation
   if op then
     labels = labels or git.conflict_labels(repo)
-    subtitle = labels.operation or op.kind:upper()
+    operation = labels.operation or op.kind:upper()
   end
   local list = { sections.conflicts, sections.staged, sections.unstaged, sections.untracked }
-  vim.list_extend(list, stash.sections(repo))
-  return {
+  if #(self.paths or {}) == 0 then
+    vim.list_extend(list, stash.sections(repo))
+  end
+  self.status = {
     title = title,
-    subtitle = subtitle,
+    subtitle = operation or "git status",
+    operation = operation,
     sections = list,
     empty_text = "Working tree clean",
   }
+  return self.status
 end
 
 local COLUMNS = { "head", "worktree", "index" }
@@ -324,7 +443,18 @@ function StatusView:after_change()
   end
 end
 
----@param opts? { changed?: boolean }
+local function touches_worktree(cmp)
+  for _, side in ipairs({ cmp.left, cmp.right }) do
+    if side.kind == "worktree" or side.kind == "index" then
+      return true
+    end
+  end
+  return false
+end
+
+--- The status anew; what the log selected shows it: the status, or a comparison (anew when it
+--- compares the working tree or index, or `reshow`); the log follows (see log_follow).
+---@param opts? { changed?: boolean, reshow?: boolean }
 function StatusView:refresh(opts)
   opts = opts or {}
   if self.cleaned or not self.layout:is_valid() then
@@ -340,7 +470,23 @@ function StatusView:refresh(opts)
     return
   end
   source.reload_index(self.repo)
-  self:set_sections(data)
+  if self.shows ~= "comparison" then
+    local switch = self.displayed ~= self.shows
+    self.displayed = self.shows
+    self:set_sections(self:shown_status(data), { switch = switch })
+  elseif self.cmp and (opts.reshow or touches_worktree(self.cmp)) then
+    -- (one made against HEAD: against the HEAD of now)
+    self:show_comparison(self.cmp.again and self.cmp.again() or self.cmp, self.cmp_row, true)
+  end
+  self:log_follow()
+end
+
+--- `R`: the status anew, a comparison of the log too; in the log panel the log as well.
+function StatusView:action_refresh(ctx)
+  if self.log and ctx and ctx.buf == self.log.buf then
+    self.log_refs = nil
+  end
+  self:refresh({ reshow = true })
 end
 
 function StatusView:setup_watchers()
@@ -430,6 +576,9 @@ function StatusView:on_cleanup()
     end)
   end
   self.watchers = nil
+  if self.log then
+    self.log:destroy()
+  end
 end
 
 ---------------------------------------------------------------------------
@@ -558,7 +707,7 @@ function StatusView:resolve(entries)
 end
 
 function StatusView:action_toggle_stage(ctx)
-  if self:committing() then
+  if self:committing() or self:read_only() then
     return
   end
   local entries = self:selected_entries(ctx)
@@ -589,7 +738,7 @@ end
 --- the conflict back.
 ---@param side "local"|"remote"
 function StatusView:take_whole_file(ctx, side)
-  if self:committing() then
+  if self:committing() or self:read_only() then
     return
   end
   local entries = vim.tbl_filter(function(e)
@@ -652,28 +801,61 @@ function StatusView:action_take_remote_file(ctx)
   self:take_whole_file(ctx, "remote")
 end
 
+--- Paths of the entries of the status sections `ids` (with the old path of renames when
+--- `oldpaths`): for git commands limited to the view's paths, which fail on a pathspec that
+--- matches nothing.
+function StatusView:entry_paths(ids, oldpaths)
+  local out = {}
+  for _, sec in ipairs((self.status or {}).sections or {}) do
+    if ids[sec.id] then
+      for _, e in ipairs(sec.entries) do
+        out[#out + 1] = e.path
+        if oldpaths and e.oldpath then
+          out[#out + 1] = e.oldpath
+        end
+      end
+    end
+  end
+  return out
+end
+
+--- `S`: stages everything (of the paths the view shows).
 function StatusView:action_stage_all()
-  if self:committing() then
+  if self:committing() or self:read_only() then
     return
   end
-  self:git({ "add", "-A" }, "git add -A")
+  if #(self.paths or {}) == 0 then
+    self:git({ "add", "-A" }, "git add -A")
+  else
+    local paths = self:entry_paths({ conflicts = true, unstaged = true, untracked = true })
+    if #paths > 0 then
+      self:git(vim.list_extend({ "add", "-A", "--" }, literal(paths)), "git add -A")
+    end
+  end
   self:after_change()
 end
 
+--- `U`: unstages everything (of the paths the view shows).
 function StatusView:action_unstage_all()
-  if self:committing() then
+  if self:committing() or self:read_only() then
     return
   end
-  if self.head then
-    self:git({ "reset", "-q" }, "git reset")
+  local paths = { "." }
+  if #(self.paths or {}) > 0 then
+    paths = literal(self:entry_paths({ staged = true }, true))
+  end
+  if #paths == 0 then
+    -- (nothing staged there)
+  elseif self.head then
+    self:git(vim.list_extend({ "reset", "-q", "--" }, paths), "git reset")
   else
-    self:git({ "rm", "--cached", "-r", "-q", "--", "." }, "git rm --cached")
+    self:git(vim.list_extend({ "rm", "--cached", "-r", "-q", "--" }, paths), "git rm --cached")
   end
   self:after_change()
 end
 
 function StatusView:action_discard(ctx)
-  if self:committing() then
+  if self:committing() or self:read_only() then
     return
   end
   local s = self:stash_at(ctx)
@@ -730,8 +912,22 @@ end
 -- Committing
 ---------------------------------------------------------------------------
 
---- `git commit <args>`: the message in a window below; `:wq` commits, `:q!` aborts.
+--- `git commit <args>`: the message in a window below; `:wq` commits, `:q!` aborts. A view of
+--- some paths only says what else is staged (the commit takes it too).
 function StatusView:start_commit(args)
+  if #(self.paths or {}) > 0 then
+    local shown = {}
+    for _, p in ipairs(self:entry_paths({ staged = true })) do
+      shown[p] = true
+    end
+    local staged = vim.split(git.output(self.repo, { "diff", "--cached", "--name-only", "-z" }) or "", "\0", { trimempty = true })
+    local elsewhere = vim.tbl_filter(function(p)
+      return not shown[p]
+    end, staged)
+    if #elsewhere > 0 then
+      util.warn("the commit also takes what is staged elsewhere: " .. table.concat(elsewhere, ", "))
+    end
+  end
   require("diffmerge.commit").run(self.repo, args, function()
     views.refresh_repo(self.repo)
   end)
@@ -804,8 +1000,9 @@ end
 
 --- `b`: switch branches (a picker of local and remote branches, or a new one).
 function StatusView:action_branch()
-  local branch = require("diffmerge.branch")
-  branch.pick(self.repo, branch.refresher(self.repo))
+  require("diffmerge.branch").pick(self.repo, function()
+    views.refresh_repo(self.repo)
+  end)
 end
 
 ---------------------------------------------------------------------------
@@ -815,9 +1012,38 @@ end
 -- the sections with changes of the working tree (what can be stashed)
 local WORK = { staged = true, unstaged = true, untracked = true }
 
+--- The changes of the whole repository (a stash takes them, whatever paths the view shows):
+--- their paths, and whether some are staged.
+---@return string[], boolean
+function StatusView:changes()
+  local paths, staged = {}, false
+  if #(self.paths or {}) == 0 then
+    for _, sec in ipairs((self.status or {}).sections or {}) do
+      if WORK[sec.id] then
+        for _, e in ipairs(sec.entries) do
+          paths[#paths + 1] = e.path
+        end
+        staged = staged or (sec.id == "staged" and #sec.entries > 0)
+      end
+    end
+    return paths, staged
+  end
+  local out = git.output(self.repo, { "status", "--porcelain=v2", "-z", "--untracked-files=all" }) or ""
+  for _, e in ipairs(parse.status(out).entries) do
+    if e.kind ~= "unmerged" then
+      paths[#paths + 1] = e.path
+      staged = staged or (e.kind ~= "untracked" and e.x ~= ".")
+    end
+  end
+  return paths, staged
+end
+
 --- The stash under the cursor in the file panel (its section or one of its files; a visual
---- range: when all of it is in one stash), or of the file shown.
+--- range: when all of it is in one stash), or of the file shown (not from the log panel).
 function StatusView:stash_at(ctx)
+  if self.log and ctx.buf == self.log.buf then
+    return nil
+  end
   if not self.files or ctx.buf ~= self.files.buf then
     return self.current and self.current.stash
   end
@@ -893,14 +1119,8 @@ function StatusView:action_stash(ctx)
   if s then
     return self:stash_menu(s)
   end
-  local work, selected, files, renamed, untracked = {}, {}, {}, {}, false
-  for _, sec in ipairs(self.sections or {}) do
-    if WORK[sec.id] then
-      for _, e in ipairs(sec.entries) do
-        work[#work + 1] = e.path
-      end
-    end
-  end
+  local selected, files, renamed, untracked = {}, {}, {}, false
+  local work, staged = self:changes()
   if #work == 0 then
     util.info("no local changes to stash")
     return
@@ -919,9 +1139,6 @@ function StatusView:action_stash(ctx)
       end
     end
   end
-  local staged = vim.iter(self.sections or {}):any(function(sec)
-    return sec.id == "staged" and #sec.entries > 0
-  end)
   local choices = {}
   if staged then
     choices[#choices + 1] = { what = "staged", text = "Staged changes" }
@@ -1139,6 +1356,9 @@ end
 --- What a staging / discarding key acts on: the entry, which version of the file the window
 --- shows, the cursor (or visual) lines and the file's versions, loaded on demand.
 function StatusView:change_context(ctx, mode, verb)
+  if self:read_only() then
+    return nil
+  end
   local entry = self.current
   if entry and entry.stash then
     util.info("a stash is read-only: s in the file panel applies it")

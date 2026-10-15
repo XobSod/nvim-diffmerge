@@ -123,62 +123,72 @@ function Panel:pseudo_rows(counts)
   return { t1, t2 }, { r1, r2 }
 end
 
---- Starts (or restarts) loading the log.
----@param args string[] full git arguments
+--- The rows of `batch` (lines of git log), appended to `texts` / `rows`.
+local function parse_batch(batch, texts, rows)
+  for _, raw in ipairs(batch) do
+    local text, row = M.parse_line(raw)
+    texts[#texts + 1] = text
+    rows[#rows + 1] = row
+  end
+end
+
+--- Shows `texts` / `rows` (the log) under the pseudo rows.
+function Panel:replace(texts, rows)
+  local all_texts, all_rows = {}, {}
+  if self.has_pseudo then
+    all_texts, all_rows = self:pseudo_rows(self.pseudo_counts)
+  end
+  vim.list_extend(all_texts, texts)
+  vim.list_extend(all_rows, rows)
+  self.by_sha = {}
+  for i, r in ipairs(all_rows) do
+    if r.sha then
+      self.by_sha[r.sha] = i
+    end
+  end
+  self.placeholder = #all_rows == 0
+  if self.placeholder then
+    all_texts, all_rows = { "  loading…" }, { { kind = "message" } }
+  end
+  self.rows = all_rows
+  util.set_lines(self.buf, all_texts)
+end
+
+--- Starts (or restarts) loading the log. The first time it streams in; a reload leaves the log
+--- on screen (and usable) until the new one is complete, then replaces it at once
+--- (`before_replace` first).
+---@param args? string[] full git arguments (nil: no commits to show)
 ---@param pseudo? { unstaged: integer, staged: integer, untracked: integer }
----@param on_batch? fun(first: integer, last: integer) rows added
+---@param on_batch? fun(first: integer, last: integer) rows added (a reload: all of them)
 ---@param on_done? fun(ok: boolean, err?: string)
-function Panel:load(repo, args, pseudo, on_batch, on_done)
+---@param before_replace? fun() a reload is about to replace the log on screen
+function Panel:load(repo, args, pseudo, on_batch, on_done, before_replace)
   if self.job then
     self.job.kill()
     self.job = nil
   end
-  self.rows = {}
-  self.by_sha = {}
   self.loading = true
-  local lines = {}
-  if pseudo then
-    local l, r = self:pseudo_rows(pseudo)
-    lines = l
-    self.rows = r
+  self.has_pseudo = pseudo ~= nil
+  self.pseudo_counts = pseudo
+  local reload = #self.rows > 0 and not self.placeholder
+  if not reload then
+    self:replace({}, {})
   end
-  util.set_lines(self.buf, #lines > 0 and lines or { "  loading…" })
-  if #lines == 0 then
-    self.rows = { { kind = "message" } }
-    self.placeholder = true
-  end
-  self.job = git.stream(repo, args, {}, function(batch)
-    if not api.nvim_buf_is_valid(self.buf) then
-      return
-    end
-    local texts = {}
-    local start = #self.rows
-    if self.placeholder then
-      start = 0
-      self.rows = {}
-    end
-    for _, raw in ipairs(batch) do
-      local text, row = M.parse_line(raw)
-      texts[#texts + 1] = text
-      self.rows[#self.rows + 1] = row
-      if row.sha then
-        self.by_sha[row.sha] = #self.rows
-      end
-    end
-    if self.placeholder then
-      util.set_lines(self.buf, texts, 0, -1)
-      self.placeholder = false
-    else
-      util.set_lines(self.buf, texts, start, start)
-    end
-    if on_batch then
-      on_batch(start + 1, #self.rows)
-    end
-  end, function(res)
+  local texts, rows = {}, {}
+  local function finish(res)
     self.loading = false
     self.job = nil
     if not api.nvim_buf_is_valid(self.buf) then
       return
+    end
+    if reload then
+      if before_replace then
+        before_replace()
+      end
+      self:replace(texts, rows)
+      if on_batch then
+        on_batch(1, #self.rows)
+      end
     end
     if self.placeholder then
       local msg = res.ok and "  (no commits)" or ("  " .. vim.trim(res.stderr))
@@ -188,7 +198,60 @@ function Panel:load(repo, args, pseudo, on_batch, on_done)
     if on_done then
       on_done(res.ok, res.stderr)
     end
-  end)
+  end
+  if not args then
+    local job = { kill = function() end }
+    self.job = job
+    vim.schedule(function()
+      if self.job == job then
+        finish({ ok = true, stderr = "" })
+      end
+    end)
+    return
+  end
+  self.job = git.stream(repo, args, {}, function(batch)
+    if not api.nvim_buf_is_valid(self.buf) then
+      return
+    end
+    if reload then
+      parse_batch(batch, texts, rows)
+      return
+    end
+    local new_texts, new_rows = {}, {}
+    parse_batch(batch, new_texts, new_rows)
+    local start = #self.rows
+    if self.placeholder then
+      self:replace(new_texts, new_rows)
+      start = 0
+    else
+      for i, r in ipairs(new_rows) do
+        self.rows[start + i] = r
+        if r.sha then
+          self.by_sha[r.sha] = start + i
+        end
+      end
+      util.set_lines(self.buf, new_texts, start, start)
+    end
+    if on_batch then
+      on_batch(start + 1, #self.rows)
+    end
+  end, finish)
+end
+
+--- New counts in the pseudo rows (a log without them: nothing).
+---@param counts { unstaged: integer, staged: integer, untracked: integer, conflicts?: integer }
+function Panel:set_pseudo(counts)
+  if not self.has_pseudo or not api.nvim_buf_is_valid(self.buf) then
+    return
+  end
+  self.pseudo_counts = counts
+  local first = self.rows[1]
+  if not first or first.kind ~= "worktree" then
+    return
+  end
+  local texts, rows = self:pseudo_rows(counts)
+  self.rows[1], self.rows[2] = rows[1], rows[2]
+  util.set_lines(self.buf, texts, 0, 2)
 end
 
 function Panel:row(line)

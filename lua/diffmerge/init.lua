@@ -71,13 +71,14 @@ function M.diff(args)
   end
 end
 
---- Repository history.
+--- Repository history: the status view with its log shown (`args`: a view of its own showing
+--- `git log <args>`).
 ---@param opts? { args?: string[] }
 function M.log(opts)
   M.ensure_setup()
   local repo = repo_for()
   if repo then
-    return require("diffmerge.view.log").open(repo, vim.tbl_extend("force", { mode = "log" }, opts or {}))
+    return require("diffmerge.view.status").open(repo, { mode = "log", args = (opts or {}).args })
   end
 end
 
@@ -105,7 +106,7 @@ function M.history(path, opts)
     return
   end
   local rel = require("diffmerge.git").relpath(repo, path)
-  return require("diffmerge.view.log").open(repo, { mode = "history", path = rel, range = opts.range })
+  return require("diffmerge.view.status").open(repo, { mode = "history", path = rel, range = opts.range })
 end
 
 --- `git difftool` entry point (two files or two directories).
@@ -161,7 +162,9 @@ function M.switch(args)
   if not repo then
     return
   end
-  local done = require("diffmerge.branch").refresher(repo)
+  local function done()
+    require("diffmerge.view").refresh_repo(repo)
+  end
   if args and #args > 0 then
     require("diffmerge.branch").switch(repo, args, done)
   else

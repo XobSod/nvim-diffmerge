@@ -114,6 +114,45 @@ function M.extend(dst, src)
   return dst
 end
 
+--- The words of `s` as a shell splits them: '...' and "..." quote, \ escapes.
+function M.shell_words(s)
+  local words, word, quote, i, any = {}, {}, nil, 1, false
+  while i <= #s do
+    local c = s:sub(i, i)
+    if quote == "'" then
+      if c == "'" then
+        quote = nil
+      else
+        word[#word + 1] = c
+      end
+    elseif c == "\\" and i < #s and (quote == nil or s:sub(i + 1, i + 1):match('["\\$`]')) then
+      i = i + 1
+      word[#word + 1] = s:sub(i, i)
+      any = true
+    elseif quote == '"' then
+      if c == '"' then
+        quote = nil
+      else
+        word[#word + 1] = c
+      end
+    elseif c == "'" or c == '"' then
+      quote, any = c, true
+    elseif c:match("%s") then
+      if any or #word > 0 then
+        words[#words + 1] = table.concat(word)
+        word, any = {}, false
+      end
+    else
+      word[#word + 1] = c
+    end
+    i = i + 1
+  end
+  if any or #word > 0 then
+    words[#words + 1] = table.concat(word)
+  end
+  return words
+end
+
 --- Runs `fn` once a vim.ui.select menu is gone. Pickers that run in a terminal (fzf-lua) call
 --- back while it closes, and closing it leaves insert mode: a prompt opened from the callback
 --- would start in normal mode.

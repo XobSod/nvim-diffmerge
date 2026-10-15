@@ -780,6 +780,10 @@ function View:close()
     self:cleanup()
     return
   end
+  if require("diffmerge.commit").message_tab() == tab then
+    util.warn("a commit message is open in this tab: :wq commits it, :q! aborts")
+    return
+  end
   self:detach_entry()
   for _, win in ipairs(self.layout:diff_wins()) do
     M.clean_window(win)

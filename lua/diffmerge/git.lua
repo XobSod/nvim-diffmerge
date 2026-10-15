@@ -83,11 +83,13 @@ end
 
 --- Runs git asynchronously; `cb` is called on the main loop.
 ---@param cb fun(res: diffmerge.RunResult)
+---@param opts? { stdin?: string, env?: table<string, string>, detach?: boolean } detach: in a process group of its own (kill(-pid) ends what it started too)
 function M.run_async(repo, args, opts, cb)
   opts = opts or {}
   local ok, err = pcall(vim.system, build_cmd(args), {
     cwd = cwd_of(repo),
-    env = env,
+    env = opts.env and vim.tbl_extend("force", env, opts.env) or env,
+    detach = opts.detach,
     stdin = opts.stdin,
     text = false,
   }, function(res)
@@ -99,7 +101,9 @@ function M.run_async(repo, args, opts, cb)
     vim.schedule(function()
       cb({ ok = false, code = -1, stdout = "", stderr = tostring(err) })
     end)
+    return nil
   end
+  return err
 end
 
 --- Streams stdout line by line (split on `sep`, default "\n").

@@ -51,6 +51,12 @@ M.subcommands = {
   conflicts = function()
     dm().status({ conflicts = true })
   end,
+  commit = function(_, cmd)
+    -- as a shell would split them: -m "two words"
+    local words = util.shell_words(cmd.args or "")
+    table.remove(words, 1)
+    dm().commit(words)
+  end,
   diff = function(args)
     dm().diff(args)
   end,
@@ -180,6 +186,9 @@ function M.complete(arglead, cmdline, _)
     return filter(names, arglead)
   end
   local sub = words[2]
+  if sub == "commit" then
+    return filter({ "--amend", "--no-verify", "--allow-empty", "--signoff", "--no-edit", "--fixup=", "--squash=" }, arglead)
+  end
   if sub == "diff" or sub == "log" then
     if vim.tbl_contains(words, "--") and arglead ~= "--" then
       return vim.fn.getcompletion(arglead, "file")

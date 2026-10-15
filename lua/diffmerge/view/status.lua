@@ -556,6 +556,9 @@ function StatusView:resolve(entries)
 end
 
 function StatusView:action_toggle_stage(ctx)
+  if self:committing() then
+    return
+  end
   local entries = self:selected_entries(ctx)
   local by_section = { staged = {}, unstaged = {}, untracked = {}, conflicts = {} }
   for _, e in ipairs(entries) do
@@ -584,6 +587,9 @@ end
 --- the conflict back.
 ---@param side "local"|"remote"
 function StatusView:take_whole_file(ctx, side)
+  if self:committing() then
+    return
+  end
   local entries = vim.tbl_filter(function(e)
     return e.section == "conflicts"
   end, self:selected_entries(ctx))
@@ -645,11 +651,17 @@ function StatusView:action_take_remote_file(ctx)
 end
 
 function StatusView:action_stage_all()
+  if self:committing() then
+    return
+  end
   self:git({ "add", "-A" }, "git add -A")
   self:after_change()
 end
 
 function StatusView:action_unstage_all()
+  if self:committing() then
+    return
+  end
   if self.head then
     self:git({ "reset", "-q" }, "git reset")
   else
@@ -659,6 +671,9 @@ function StatusView:action_unstage_all()
 end
 
 function StatusView:action_discard(ctx)
+  if self:committing() then
+    return
+  end
   local s = self:stash_at(ctx)
   if s then
     return self:stash_drop(s)
@@ -707,6 +722,56 @@ function StatusView:action_discard(ctx)
     end
   end
   vim.cmd("silent! checktime")
+end
+
+---------------------------------------------------------------------------
+-- Committing
+---------------------------------------------------------------------------
+
+--- `git commit <args>`: the message in a window below; `:wq` commits, `:q!` aborts.
+function StatusView:start_commit(args)
+  require("diffmerge.commit").run(self.repo, args, function()
+    if not self.cleaned and self.layout:is_valid() then
+      self:after_change()
+    end
+  end)
+end
+
+--- A commit is running: what is staged must stay as it is (git commits the index it started
+--- with).
+function StatusView:committing()
+  if require("diffmerge.commit").running() then
+    util.warn("a commit is running: finish it first (:wq commits, :q! aborts)")
+    return true
+  end
+  return false
+end
+
+--- `c`: commit or amend, from a menu (`cc` / `ca` typed together go straight there).
+function StatusView:action_commit_menu()
+  local choices = { { args = {}, text = "Commit" }, { args = { "--amend" }, text = "Amend the last commit" } }
+  vim.ui.select(choices, {
+    prompt = "git commit",
+    format_item = function(c)
+      return c.text
+    end,
+  }, function(choice)
+    if choice then
+      util.after_select(function()
+        self:start_commit(choice.args)
+      end)
+    end
+  end)
+end
+
+--- `cc`: commit what is staged.
+function StatusView:action_commit()
+  self:start_commit({})
+end
+
+--- `ca`: amend the last commit (its message to edit).
+function StatusView:action_commit_amend()
+  self:start_commit({ "--amend" })
 end
 
 ---------------------------------------------------------------------------
@@ -793,6 +858,9 @@ end
 --- `s`: stash (staged changes, the selected files, everything ...); on a stash: apply, pop or
 --- drop it.
 function StatusView:action_stash(ctx)
+  if self:committing() then
+    return
+  end
   local s = self:stash_at(ctx)
   if s then
     return self:stash_menu(s)
@@ -1125,6 +1193,9 @@ end
 --- only the directions allowed by `staging_frame` differ.
 ---@param mode "hunk"|"lines"|"line"
 function StatusView:stage_change(ctx, mode)
+  if self:committing() then
+    return
+  end
   local c = self:change_context(ctx, mode, "staged")
   if not c then
     return
@@ -1194,6 +1265,9 @@ end
 --- working tree gets the INDEX version back. The file is saved unless it already had unsaved
 --- edits (those are never written implicitly); `u` brings the change back.
 function StatusView:action_discard_change(ctx)
+  if self:committing() then
+    return
+  end
   local mode = ctx.range and "lines" or "hunk"
   local c = self:change_context(ctx, mode, "discarded")
   if not c then

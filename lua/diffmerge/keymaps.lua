@@ -30,6 +30,9 @@ M.descriptions = {
   unstage_all = "Unstage everything",
   discard = "Discard changes (confirm); on a stash: drop it",
   stash = "Stash staged changes / files / everything; on a stash: apply, pop, drop",
+  commit_menu = "Commit / amend (menu)",
+  commit = "Commit (git commit: the message in a window, :wq commits, :q! aborts)",
+  commit_amend = "Amend the last commit (git commit --amend)",
   take_local_file = "Conflict: take LOCAL (ours) for the whole file",
   take_remote_file = "Conflict: take REMOTE (theirs) for the whole file",
   toggle_tree = "Toggle tree / list",
@@ -64,6 +67,15 @@ local records = {}
 function M.apply(buf, group, handler, filter)
   local maps = config.options.keymaps[group] or {}
   records[buf] = records[buf] or {}
+  -- a key that longer ones start with (c: cc, ca) waits for them ('timeoutlen')
+  local function starts_others(lhs)
+    for other, a in pairs(maps) do
+      if a and other ~= lhs and vim.startswith(other, lhs) then
+        return true
+      end
+    end
+    return false
+  end
   for lhs, action in pairs(maps) do
     if action and (not filter or type(action) ~= "string" or filter(action)) then
       local modes = { "n" }
@@ -109,7 +121,7 @@ function M.apply(buf, group, handler, filter)
           else
             handler(action, ctx)
           end
-        end, { buffer = buf, nowait = true, silent = true, desc = "DiffMerge: " .. desc })
+        end, { buffer = buf, nowait = not starts_others(lhs), silent = true, desc = "DiffMerge: " .. desc })
       end
     end
   end

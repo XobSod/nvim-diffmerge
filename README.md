@@ -11,6 +11,8 @@ dependencies, Neovim 0.12+.
 - **Stashing what you staged** — `s` stashes the staged lines and hunks only (also next to
   unstaged changes, where `git stash --staged` fails), files, or everything; stashes are listed
   below the changes and open like changes, read-only; apply, pop, drop.
+- **Committing** — `cc` / `ca` (amend) in the status view: git's own commit (template, hooks,
+  merge message), the message in a window below, `:wq` commits, `:q!` aborts.
 - **Changed characters** are highlighted in merges and in the three columns too (following
   `'diffopt'` `inline:`), where Vim's own colours would compare every window with every other.
 - **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.

@@ -390,6 +390,17 @@ function M.info(buf)
   return by_buf[buf]
 end
 
+--- An editable INDEX buffer of the repository has unsaved edits (git uses the index on disk).
+function M.unsaved_index(repo)
+  for buf, info in pairs(by_buf) do
+    local same = info.repo and repo and info.repo.root == repo.root
+    if same and info.src.kind == "index" and info.editable and api.nvim_buf_is_valid(buf) and vim.bo[buf].modified then
+      return true
+    end
+  end
+  return false
+end
+
 --- Lines of a source without creating a buffer (used by the merge engine and staging).
 ---@return string[]|nil lines, table flags
 function M.read_lines(repo, src)

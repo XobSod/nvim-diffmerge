@@ -9,6 +9,7 @@ CONTENTS                                                   *diffmerge-contents*
   4. Views ...................................... |diffmerge-views|
      Status ..................................... |diffmerge-status|
      Stashes .................................... |diffmerge-stash|
+     Committing ................................. |diffmerge-commit|
      Diff ....................................... |diffmerge-diff|
      Log / history .............................. |diffmerge-log|
      Merge ...................................... |diffmerge-merge|
@@ -103,6 +104,10 @@ With lazy.nvim: >lua
                           alias dmdiff='nvim -c "DiffMerge compare" --'
                           dmdiff old.txt new.txt
 <
+:DiffMerge commit [args]
+                        `git commit [args]`, the message edited in a window
+                        below (|diffmerge-commit|).
+
 :DiffMerge difftool [left right [name]]
 :DiffMerge mergetool [local base remote merged]
                         Entry points for |diffmerge-git|. Started without
@@ -232,6 +237,24 @@ stash or its files, `s` offers apply (the staged part staged again), pop
 (apply and drop) and drop; `X` drops it (asks first). An apply that
 conflicts shows the files under Conflicts; git does not apply a stash to
 files with changes of their own.
+
+COMMITTING                                                 *diffmerge-commit*
+
+`cc` in the file panel commits what is staged, `ca` amends the last commit,
+and `c` alone offers both from a menu. `:DiffMerge commit [args]` runs `git
+commit` with any arguments, quoted as in a shell (`-m "two words"`). It is
+git's own commit: git's message template (your commit.template, the merge
+message when a merge is finished, the last message when amending), its hooks,
+its cleanup of `#` lines. The message opens in a window below (filetype
+gitcommit): `:wq`, `:x`, `ZZ` commit (`:q` too, when you left the message as
+git wrote it); `:q!` or `ZQ` aborts, also when git filled the message in. If
+you went on working elsewhere meanwhile (a slow pre-commit hook), the window
+opens without taking you there. While git runs before the message (hooks),
+`cc` again offers to stop it. Until the commit is done, what is staged stays
+as it is (git commits the index it started with) and the status view does not
+close. What git says (the new commit, or why not, e.g. a failing hook) shows
+when it is done; a message rejected after you wrote it (a commit-msg hook) is
+offered again by the next `cc`.
 
 ------------------------------------------------------------------------------
 DIFF                                                           *diffmerge-diff*
@@ -401,6 +424,9 @@ merge                        file_panel                log_panel
   ]c / [c   next/prev_chunk    U       unstage_all       K     commit_details
                                X       discard           Y     yank_hash
                                s       stash
+                               c       commit_menu
+                               cc      commit
+                               ca      commit_amend
                                <leader>1 take_local_file F     toggle_first_parent
                                <leader>3 take_remote_file
                                i       toggle_tree       a     toggle_all_branches
@@ -476,6 +502,7 @@ Conflict colours are blended from the Normal background.
     dm.history(path, { range = { first, last } })
     dm.difftool(left, right, name)
     dm.compare(left, right)
+    dm.commit({ "--amend" })
     dm.mergetool(local_, base, remote, merged)
     dm.current()   -- view of the current tab
     dm.close()

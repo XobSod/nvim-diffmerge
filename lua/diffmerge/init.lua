@@ -121,6 +121,23 @@ function M.compare(left, right, opts)
   return require("diffmerge.view.diff").open_compare(left, right, opts)
 end
 
+--- `git commit <args>` with the message edited in this Neovim; status views follow.
+---@param args? string[]
+function M.commit(args)
+  M.ensure_setup()
+  local repo = repo_for()
+  if not repo then
+    return
+  end
+  require("diffmerge.commit").run(repo, args or {}, function()
+    for _, view in pairs(require("diffmerge.view").views) do
+      if view.kind_name == "status" and view.repo.root == repo.root and not view.cleaned then
+        view:after_change()
+      end
+    end
+  end)
+end
+
 --- `git mergetool` entry point.
 function M.mergetool(local_path, base_path, remote_path, merged_path, opts)
   M.ensure_setup()

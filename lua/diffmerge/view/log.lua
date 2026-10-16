@@ -354,6 +354,7 @@ function Log:load_log()
     pseudo = self.counts or { unstaged = 0, staged = 0, untracked = 0, conflicts = 0 }
   end
   local reload = #self.log.rows > 0 and not self.log.placeholder
+  local keep_line
   -- (a first load cut short before it came to HEAD; unless you choose something meanwhile)
   local unfinished = self.auto_select and self.selected_id == self.provisional_id
   local choices = self.choices
@@ -406,8 +407,10 @@ function Log:load_log()
       if line then
         self:cursor_to(line)
       elseif #self.marks < 2 and not self.range then
-        -- (the first load had not come to HEAD yet; or what was there is gone)
-        line = head_line() or self:line_of_id("worktree")
+        -- (the first load had not come to HEAD yet: HEAD; what was there is gone, rewritten:
+        -- what is on its line now)
+        local there = not head and keep_line and self.log:row(keep_line)
+        line = (there and there.kind == "commit" and keep_line) or head_line() or self:line_of_id("worktree")
         if line then
           self:auto_pick(line)
         end
@@ -432,7 +435,8 @@ function Log:load_log()
     end
   end, function()
     local win = self.layout.log_win
-    keep = util.win_valid(win) and row_id(self.log:row(api.nvim_win_get_cursor(win)[1])) or nil
+    keep_line = util.win_valid(win) and api.nvim_win_get_cursor(win)[1] or nil
+    keep = keep_line and row_id(self.log:row(keep_line)) or nil
   end)
   if not reload then
     -- the pseudo rows are there already
@@ -985,6 +989,29 @@ function Log:action_checkout(ctx)
   require("diffmerge.branch").at_commit(self.repo, row.sha, function()
     views.refresh_repo(self.repo)
   end)
+end
+
+--- The commit under the cursor of the log, for rewriting it (nil: none, said so).
+function Log:commit_here(ctx)
+  local row = self:current_row(ctx)
+  if not row or row.kind ~= "commit" then
+    util.info("not on a commit of the log")
+    return nil
+  end
+  return row.sha
+end
+
+for name, fn in pairs({ fixup_commit = "fixup", squash_commit = "squash", reword_commit = "reword", drop_commit = "drop" }) do
+  --- `cf` / `cs` / `cr` / `cd`: the commit under the cursor fixed up with what is staged,
+  --- squashed into its parent, reworded, dropped (rewrite.lua).
+  Log["action_" .. name] = function(self, ctx)
+    local sha = self:commit_here(ctx)
+    if sha then
+      require("diffmerge.rewrite")[fn](self.repo, sha, function()
+        views.refresh_repo(self.repo)
+      end)
+    end
+  end
 end
 
 function Log:action_toggle_first_parent(ctx)

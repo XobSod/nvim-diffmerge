@@ -311,6 +311,37 @@ todo list of a `git rebase -i` is still open in an editor, nothing is offered
 and commits wait too.
 `:DiffMerge continue|skip|abort` do the same.
 
+                                                          *diffmerge-rewrite*
+On a commit of the log, the `c` keys also rewrite your branch up to it:
+
+  cf    fixup: what is staged becomes part of that commit (`git commit
+        --fixup`, whose line in the rebase's todo list DiffMerge moves right
+        after that commit)
+  cs    squash: the commit into its parent, both messages in the message
+        window to make one of
+  cr    reword: its message in the message window
+  cd    drop: the commit left out (asks first)
+
+`c` on a commit offers them too. Each is a `git rebase -i --autostash
+--no-autosquash` (your uncommitted changes are put aside and come back;
+pending `fixup!` / `squash!` commits stay where they are) whose todo list
+DiffMerge writes: you never edit it. Only the history of HEAD is rewritten,
+not with a merge commit in it or after it, not while a merge, rebase, ... is
+in progress or files are unsaved. A commit already in the upstream branch (for
+a squash: its parent) is asked about first: pushing it afterwards needs
+--force-with-lease (`P` offers it).
+
+`:q!` in the message window of a squash or reword undoes the whole rewrite. A
+conflict on the way stops it like any rebase (|diffmerge-operation|); a reword
+a commit-msg hook refuses stops at that commit: `ca` writes the message again,
+`cc` goes on. When it is over you are told where the branch was: `git reset
+--keep` there brings it back (after a fixup `git reset --soft`: the fix staged
+again). A fixup that does not happen (refused by a hook, aborted) takes its
+commit back: what was staged is staged again (one skipped in a conflict: you
+are told how to get the fix back). If your uncommitted changes do
+not apply on the rewritten branch, git keeps them in the stash and they show
+under Conflicts.
+
 FETCH / PULL / PUSH                                         *diffmerge-remote*
 
 `F` fetches, `p` pulls, `P` pushes (the file panel and log panel of the
@@ -575,7 +606,9 @@ file_panel                           log_panel
   <leader>3 take_remote_file           K     commit_details
   b         branch                     Y     yank_hash
   R         refresh                    b     checkout
-  q         close                      R     refresh
+  q         close                      cf cs fixup_commit / squash_commit
+                                       cr cd reword_commit / drop_commit
+                                       R     refresh
                                        q     close
 
 diff (status diff windows)           merge (windows of a merge)

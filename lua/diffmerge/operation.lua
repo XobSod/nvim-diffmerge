@@ -133,7 +133,7 @@ end
 --- the buffers of `discard` (your unsaved edits, as asked), the views show the operation's next
 --- stop.
 ---@param discard table<string, string> path -> its file's stamp before (read anew if git wrote it)
-local function after(repo, discard, on_done)
+function M.after(repo, discard, on_done)
   return function(res)
     local views = require("diffmerge.view")
     for _, view in pairs(views.views) do
@@ -154,6 +154,10 @@ local function after(repo, discard, on_done)
       end
     end
     vim.cmd("silent! checktime")
+    if not M.current(repo) then
+      -- (a rewrite of the log that had stopped, over now: before the views show it)
+      require("diffmerge.rewrite").finished(repo)
+    end
     if on_done then
       on_done(res)
     end
@@ -193,7 +197,7 @@ local function run(repo, op, flag, question, on_done)
       return
     end
   end
-  commit.run_git(repo, { op.kind, flag }, after(repo, discard, on_done))
+  commit.run_git(repo, { op.kind, flag }, M.after(repo, discard, on_done))
 end
 
 local function nothing_going_on()

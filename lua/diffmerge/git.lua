@@ -420,10 +420,20 @@ function M.operation(repo)
     local dir = exists("rebase-merge") and "rebase-merge" or "rebase-apply"
     local head_name = read(dir .. "/head-name")
     local theirs = read("REBASE_HEAD")
-    -- where it stopped: a commit in conflict, a commit to edit (`edit`, also after a commit
-    -- of it squashed), elsewhere (`break`, a failing `exec`)
+    -- where it stopped: a commit in conflict (also a fixup / squash of one), a commit to edit
+    -- (`edit`, also after a commit of it squashed), elsewhere (`break`, a failing `exec`)
     local stop = "other"
-    if exists(dir .. "/amend") then
+    -- (the command it stopped at; a fixup / squash in conflict stays that, also resolved)
+    local f = io.open(vim.fs.joinpath(repo.gitdir, dir, "done"), "r")
+    local done = vim.split(f and f:read("*a") or "", "\n", { trimempty = true })
+    if f then
+      f:close()
+    end
+    local command = (done[#done] or ""):match("^(%a+)")
+    local melding = command == "fixup" or command == "f" or command == "squash" or command == "s"
+    if theirs and (melding or (M.output(repo, { "ls-files", "-u" }) or "") ~= "") then
+      stop = "conflict"
+    elseif exists(dir .. "/amend") then
       stop = "edit"
     elseif theirs then
       stop = "conflict"

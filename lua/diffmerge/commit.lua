@@ -9,14 +9,13 @@ local util = require("diffmerge.util")
 local api = vim.api
 local M = {}
 
-local script = vim.fs.joinpath(
+local scripts = vim.fs.joinpath(
   vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(vim.fs.normalize(debug.getinfo(1, "S").source:sub(2))))),
-  "scripts",
-  "git-editor.lua"
+  "scripts"
 )
 
 -- the git command running: { repo, what = "git commit" / "git rebase --continue" ..., kind =
--- its command, tab = where it was started, proc, editing = the message window's state,
+-- its command, tab, win = where it was started, proc, editing = the message window's state,
 -- aborted, stopped, head = HEAD before }
 local running
 -- by git dir: the message written for a command (`kind`) that failed after it (a hook,
@@ -27,6 +26,12 @@ local last_message = {}
 --- Quoted for /bin/sh, which runs GIT_EDITOR whatever 'shell' is.
 local function sh_quote(s)
   return "'" .. s:gsub("'", [['\'']]) .. "'"
+end
+
+--- The command git runs for one of DiffMerge's scripts (scripts/<name>): this Neovim, headless.
+function M.script_command(name)
+  local path = vim.fs.joinpath(scripts, name)
+  return table.concat({ sh_quote(vim.v.progpath), "--headless", "--clean", "-l", sh_quote(path) }, " ")
 end
 
 --- The message part of a message file: its lines up to git's comments, trailing blank lines
@@ -69,7 +74,9 @@ function M.edit(file)
   local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
   state.offered = message_part(lines)
   local remembered = running and last_message[running.repo.gitdir]
-  if remembered and remembered.kind == running.kind and util.lines_equal(remembered.offered, state.offered) then
+  -- (a reword a hook refused: the rebase stopped at that commit, `ca` writes it again)
+  local same_kind = remembered and (remembered.kind == running.kind or (remembered.kind == "rebase" and running.kind == "commit"))
+  if same_kind and util.lines_equal(remembered.offered, state.offered) then
     -- in place of git's message (the lines before its comments)
     local first_comment = #lines
     for i, l in ipairs(lines) do
@@ -125,11 +132,18 @@ function M.edit(file)
     end,
   })
   -- the window may move (<C-w>T): done when the buffer is gone
+  local from = running and running.win
   api.nvim_create_autocmd("BufWipeout", {
     buffer = buf,
     once = true,
     callback = function()
       state.done = true
+      -- back to where it was started from (the log, the file panel), not wherever Vim goes
+      vim.schedule(function()
+        if from and api.nvim_win_is_valid(from) and api.nvim_win_get_tabpage(from) == api.nvim_get_current_tabpage() then
+          api.nvim_set_current_win(from)
+        end
+      end)
     end,
   })
   return true
@@ -195,19 +209,31 @@ end
 --- and what went to stderr (hooks write there) as it is.
 local function said(res)
   local out = {}
-  for _, l in ipairs(vim.split(res.stdout or "", "\n", { trimempty = true })) do
+  -- (a line git wrote over with \r: what it ended with)
+  local function last(l)
+    return (l:gsub("^.*\r", ""))
+  end
+  for _, raw in ipairs(vim.split(res.stdout or "", "\n", { trimempty = true })) do
+    local l = last(raw)
     local listing = l:match("^On branch ")
       or l:match("^Changes ")
       or l:match("^Untracked files")
       or l:match("^Your branch ")
+      or l:match("^interactive rebase in progress")
+      or l:match("^Last commands? done")
+      or l:match("^Next commands? to do")
+      or l:match("^No commands remaining")
+      or l:match("^You are currently ")
+      or l:match("^%s+%a+ %x%x%x%x%x%x%x")
       or l:match("^\t")
       or l:match("^%s*$")
-    if not listing and not l:match("^%s*%(use ") then
+    if not listing and not l:match("^%s*%(") then
       out[#out + 1] = l
     end
   end
-  for _, l in ipairs(vim.split(res.stderr or "", "\n", { trimempty = true })) do
-    if not l:match("^hint: ") then
+  for _, raw in ipairs(vim.split(res.stderr or "", "\n", { trimempty = true })) do
+    local l = last(raw)
+    if not l:match("^hint: ") and l ~= "" then
       out[#out + 1] = l
     end
   end
@@ -244,7 +270,8 @@ end
 --- runs, starting another offers to stop it (a hook that does not end).
 ---@param args string[] e.g. { "commit", "--amend" }, { "rebase", "--continue" }
 ---@param on_done? fun(res: diffmerge.RunResult)
-function M.run_git(repo, args, on_done)
+---@param opts? { env?: table<string, string> } more of git's environment (GIT_SEQUENCE_EDITOR)
+function M.run_git(repo, args, on_done, opts)
   local committing = args[1] == "commit"
   local what = "git " .. args[1] .. ((not committing and args[2]) and (" " .. args[2]) or "")
   if running then
@@ -268,13 +295,14 @@ function M.run_git(repo, args, on_done)
   if vim.v.servername == "" then
     vim.fn.serverstart()
   end
-  local editor = table.concat({ sh_quote(vim.v.progpath), "--headless", "--clean", "-l", sh_quote(script) }, " ")
-  local env = { GIT_EDITOR = editor, DIFFMERGE_SERVER = vim.v.servername }
+  local editor = M.script_command("git-editor.lua")
+  local env = vim.tbl_extend("force", { GIT_EDITOR = editor, DIFFMERGE_SERVER = vim.v.servername }, (opts or {}).env or {})
   local this = {
     repo = repo,
     what = what,
     kind = args[1],
     tab = api.nvim_get_current_tabpage(),
+    win = api.nvim_get_current_win(),
     head = git.line(repo, { "rev-parse", "-q", "--verify", "HEAD" }),
   }
   running = this
@@ -310,18 +338,19 @@ function M.run_git(repo, args, on_done)
     elseif (res.stdout .. res.stderr):find("empty commit message", 1, true) then
       util.info("aborted: the message is empty")
     else
-      -- (not when git committed it before it stopped: a rebase's next conflict)
-      local committed = git.line(repo, { "rev-parse", "-q", "--verify", "HEAD" }) ~= this.head
-      if this.editing and this.editing.written and not committed then
-        last_message[repo.gitdir] = {
-          kind = this.kind,
-          lines = message_part(vim.split(util.read_file(this.editing.file) or "", "\n")),
-          offered = this.editing.offered,
-        }
+      if this.editing and this.editing.written then
+        local written = message_part(vim.split(util.read_file(this.editing.file) or "", "\n"))
+        -- (not when git committed it before it stopped: a rebase's next conflict)
+        local committed = vim.split(git.output(repo, { "log", "-1", "--format=%B", "HEAD" }) or "", "\n")
+        if not util.lines_equal(message_part(committed), written) then
+          last_message[repo.gitdir] = { kind = this.kind, lines = written, offered = this.editing.offered }
+        end
       end
       local lines = said(res)
       util.warn(#lines > 0 and tail(lines, 15) or (what .. " failed"))
     end
+    -- (:q! in the message window: for those that started it to undo the rest)
+    res.aborted = this.aborted
     if on_done then
       on_done(res)
     end

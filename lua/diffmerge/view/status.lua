@@ -454,6 +454,9 @@ function StatusView:refresh(opts)
     return
   end
   self.dirty = false
+  -- (a rewrite of the log over: said, a fixup that did not happen taken back, before what is
+  -- shown is read)
+  require("diffmerge.rewrite").finished(self.repo)
   local data = self:collect(opts.changed)
   if not data then
     return
@@ -941,9 +944,10 @@ function StatusView:committing()
   return false
 end
 
---- `c`: commit or amend, from a menu (`cc` / `ca` typed together go straight there); while a
---- merge, rebase, cherry-pick or revert goes on: continue, skip, abort it.
-function StatusView:action_commit_menu()
+--- `c`: commit or amend, from a menu (`cc` / `ca` typed together go straight there); on a
+--- commit of the log also fixup / squash / reword / drop it; while a merge, rebase, cherry-pick
+--- or revert goes on: continue, skip, abort it.
+function StatusView:action_commit_menu(ctx)
   local operation = require("diffmerge.operation")
   local op = operation.current(self.repo)
   if op and op.starting then
@@ -970,6 +974,16 @@ function StatusView:action_commit_menu()
     return
   end
   local choices = { { args = {}, text = "Commit" }, { args = { "--amend" }, text = "Amend the last commit" } }
+  local row = ctx and self:current_row(ctx)
+  if row and row.kind == "commit" then
+    local short = util.short(row.sha)
+    vim.list_extend(choices, {
+      { rewrite = "fixup", sha = row.sha, text = ("Fixup %s with what is staged"):format(short) },
+      { rewrite = "squash", sha = row.sha, text = ("Squash %s into its parent"):format(short) },
+      { rewrite = "reword", sha = row.sha, text = ("Reword %s"):format(short) },
+      { rewrite = "drop", sha = row.sha, text = ("Drop %s"):format(short) },
+    })
+  end
   vim.ui.select(choices, {
     prompt = "git commit",
     format_item = function(c)
@@ -978,6 +992,11 @@ function StatusView:action_commit_menu()
   }, function(choice)
     if choice then
       util.after_select(function()
+        if choice.rewrite then
+          return require("diffmerge.rewrite")[choice.rewrite](self.repo, choice.sha, function()
+            views.refresh_repo(self.repo)
+          end)
+        end
         self:start_commit(choice.args)
       end)
     end

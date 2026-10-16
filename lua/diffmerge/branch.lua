@@ -204,9 +204,9 @@ end
 local function not_now(repo)
   local op = git.operation(repo)
   if op then
-    return ("a %s is in progress: finish it first"):format(op.kind)
+    return ("a %s is in progress: finish it first"):format(git.operation_name(op))
   elseif require("diffmerge.commit").running() then
-    return "a commit is running: finish it first (:wq commits, :q! aborts)"
+    return require("diffmerge.commit").busy_message()
   end
   local unsaved = remote.unsaved(repo)
   if #unsaved > 0 then

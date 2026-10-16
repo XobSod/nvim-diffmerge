@@ -77,7 +77,7 @@ H.describe(":DiffMerge", function()
     repo()
     local complete = require("diffmerge.commands").complete
     H.ok(vim.tbl_contains(complete("", "DiffMerge ", 10), "history"))
-    H.eq(complete("con", "DiffMerge con", 13), { "conflicts" })
+    H.eq(complete("con", "DiffMerge con", 13), { "conflicts", "continue" })
     H.ok(vim.tbl_contains(complete("ma", "DiffMerge diff ma", 17), "main"))
     H.eq(complete("main...ma", "DiffMerge diff main...ma", 24), { "main...main" })
     H.eq(complete("fo", "DiffMerge layout fo", 19), { "four_way" })

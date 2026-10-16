@@ -141,11 +141,12 @@ M.subcommands = {
     end
   end,
   abort = function()
-    local view = current_view()
+    local view = dm().current()
     if view and view.abort then
+      -- (git mergetool: quit reporting failure to git)
       view:abort()
     else
-      util.err("abort is only available in git mergetool mode")
+      dm().operation("abort")
     end
   end,
 }
@@ -154,6 +155,12 @@ M.subcommands.switch = function(_, cmd)
   local words = util.shell_words(cmd.args or "")
   table.remove(words, 1)
   dm().switch(words)
+end
+
+for _, what in ipairs({ "continue", "skip" }) do
+  M.subcommands[what] = function()
+    dm().operation(what)
+  end
 end
 
 for _, what in ipairs({ "fetch", "pull", "push" }) do

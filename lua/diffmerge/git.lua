@@ -408,14 +408,37 @@ function M.operation(repo)
     f:close()
     return s and vim.trim(s) or nil
   end
+  if exists("rebase-apply/applying") then
+    -- git am
+    return {
+      kind = "am",
+      step = tonumber(read("rebase-apply/next") or ""),
+      steps = tonumber(read("rebase-apply/last") or ""),
+    }
+  end
   if exists("rebase-merge") or exists("rebase-apply") then
     local dir = exists("rebase-merge") and "rebase-merge" or "rebase-apply"
     local head_name = read(dir .. "/head-name")
+    local theirs = read("REBASE_HEAD")
+    -- where it stopped: a commit in conflict, a commit to edit (`edit`, also after a commit
+    -- of it squashed), elsewhere (`break`, a failing `exec`)
+    local stop = "other"
+    if exists(dir .. "/amend") then
+      stop = "edit"
+    elseif theirs then
+      stop = "conflict"
+    end
     return {
       kind = "rebase",
       onto = read(dir .. "/onto"),
       branch = head_name and head_name:gsub("^refs/heads/", "") or nil,
-      theirs = read("REBASE_HEAD"),
+      theirs = theirs,
+      stop = stop,
+      -- its todo list still open in an editor (git rebase -i): not begun
+      starting = dir == "rebase-merge" and not exists("rebase-merge/done"),
+      -- (which commit of how many)
+      step = tonumber(read(dir .. (dir == "rebase-merge" and "/msgnum" or "/next")) or ""),
+      steps = tonumber(read(dir .. (dir == "rebase-merge" and "/end" or "/last")) or ""),
     }
   end
   if exists("MERGE_HEAD") then
@@ -427,7 +450,17 @@ function M.operation(repo)
   if exists("REVERT_HEAD") then
     return { kind = "revert", theirs = read("REVERT_HEAD") }
   end
+  if exists("sequencer/todo") then
+    -- a cherry-pick / revert of several commits between two of them (one committed by hand)
+    local next_step = read("sequencer/todo") or ""
+    return { kind = next_step:match("^revert") and "revert" or "cherry-pick", between = true }
+  end
   return nil
+end
+
+--- How messages name an operation ("merge", "rebase", ..., "git am").
+function M.operation_name(op)
+  return op.kind == "am" and "git am" or op.kind
 end
 
 --- One-line description of a commit ("abc1234 subject").
@@ -473,15 +506,23 @@ function M.conflict_labels(repo)
   elseif op.kind == "rebase" then
     labels["local"] = "LOCAL · upstream · " .. describe(op.onto)
     labels.remote = "REMOTE · your commit · " .. describe(op.theirs)
-    labels.operation = "REBASING " .. (op.branch or "")
+    labels.operation = ("REBASING %s%s\nonto %s"):format(
+      op.branch or "",
+      op.step and op.steps and (" (%d/%d)"):format(op.step, op.steps) or "",
+      short(op.onto)
+    )
+  elseif op.kind == "am" then
+    labels["local"] = "LOCAL · HEAD · " .. head
+    labels.remote = "REMOTE · the patch"
+    labels.operation = "APPLYING PATCHES" .. (op.step and op.steps and (" (%d/%d)"):format(op.step, op.steps) or "")
   elseif op.kind == "cherry-pick" then
     labels["local"] = "LOCAL · HEAD · " .. head
     labels.remote = "REMOTE · picked · " .. describe(op.theirs)
-    labels.operation = "CHERRY-PICKING " .. short(op.theirs)
+    labels.operation = "CHERRY-PICKING " .. (op.between and "(between two commits)" or short(op.theirs))
   else
     labels["local"] = "LOCAL · HEAD · " .. head
     labels.remote = "REMOTE · reverting · " .. describe(op.theirs)
-    labels.operation = "REVERTING " .. short(op.theirs)
+    labels.operation = "REVERTING " .. (op.between and "(between two commits)" or short(op.theirs))
   end
   return labels
 end

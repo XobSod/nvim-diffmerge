@@ -154,6 +154,20 @@ function M.remote(what, args)
   end)
 end
 
+--- The merge, rebase, cherry-pick or revert going on: continued, a commit of it skipped, or
+--- aborted. The views follow.
+---@param what "continue"|"skip"|"abort"
+function M.operation(what)
+  M.ensure_setup()
+  local repo = repo_for()
+  if not repo then
+    return
+  end
+  require("diffmerge.operation")[what](repo, function()
+    require("diffmerge.view").refresh_repo(repo)
+  end)
+end
+
 --- `git switch <args>`; without args a picker of the branches. The views follow.
 ---@param args? string[]
 function M.switch(args)

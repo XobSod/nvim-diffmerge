@@ -584,6 +584,24 @@ end
 -- are when a merge view is left) and the sides they come from
 local converted = {}
 
+--- After git wrote the merged files of `repo` anew (an operation continued, a commit of it
+--- skipped, aborted): DiffMerge's conversions of them are forgotten, buffers with only those
+--- read anew (`discard`: also those with your edits).
+function M.reread(repo, discard)
+  for path, c in pairs(converted) do
+    if vim.startswith(path, repo.root .. "/") then
+      local buf = c.buf
+      if buf and api.nvim_buf_is_valid(buf) and api.nvim_buf_is_loaded(buf) and (discard or not M.user_changes(buf)) then
+        written[buf] = nil
+        api.nvim_buf_call(buf, function()
+          vim.cmd("silent edit!")
+        end)
+      end
+      converted[path] = nil
+    end
+  end
+end
+
 --- The conversion of the merged file `path` that still describes it.
 ---@param buf? integer the file's loaded buffer
 ---@param current? string[] the file as it is now

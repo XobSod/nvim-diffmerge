@@ -1,5 +1,6 @@
--- git's editor for commits started by DiffMerge (GIT_EDITOR): asks the Neovim that started
--- the commit to edit the message file there, and waits until it is done with it.
+-- git's editor for the commands DiffMerge runs (GIT_EDITOR: a commit, a rebase going on, ...):
+-- asks the Neovim that started it to edit the message file there, and waits until it is done
+-- with it.
 --   nvim --headless --clean -l git-editor.lua <message file>
 local file = arg[1]
 local server = vim.env.DIFFMERGE_SERVER or ""

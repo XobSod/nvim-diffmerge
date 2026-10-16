@@ -204,7 +204,21 @@ function Panel:render()
 
   add(" " .. self.title, { kind = "header" }, { { 0, #self.title + 1, "DiffMergeTitle" } })
   if self.subtitle and self.subtitle ~= "" then
-    add(" " .. self.subtitle, { kind = "header" }, { { 0, #self.subtitle + 1, "DiffMergeHint" } })
+    -- its lines, wrapped at words to the panel's width
+    local win = self:win()
+    local width = math.max(10, (win and api.nvim_win_get_width(win) or config.options.file_panel.width) - 2)
+    for _, part in ipairs(vim.split(self.subtitle, "\n", { plain = true })) do
+      local line = ""
+      for word in part:gmatch("%S+") do
+        if line ~= "" and vim.fn.strdisplaywidth(line .. " " .. word) > width then
+          add(" " .. line, { kind = "header" }, { { 0, #line + 1, "DiffMergeHint" } })
+          line = word
+        else
+          line = line == "" and word or (line .. " " .. word)
+        end
+      end
+      add(" " .. line, { kind = "header" }, { { 0, #line + 1, "DiffMergeHint" } })
+    end
   end
   local total = 0
   for _, s in ipairs(self.sections) do

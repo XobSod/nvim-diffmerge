@@ -125,6 +125,12 @@ With lazy.nvim: >lua
                         `git commit [args]`, the message edited in a window
                         below (|diffmerge-commit|).
 
+:DiffMerge continue
+:DiffMerge skip
+:DiffMerge abort        The merge, rebase, cherry-pick, revert or `git am`
+                        going on: continued, the commit being applied left
+                        out, or aborted (|diffmerge-operation|).
+
 :DiffMerge difftool [left right [name]]
 :DiffMerge mergetool [local base remote merged]
                         Entry points for |diffmerge-git|. Started without
@@ -139,7 +145,8 @@ With lazy.nvim: >lua
                         Cycle or set the layout (|diffmerge-layouts|).
 :DiffMerge files        Show / hide the file panel, like `gF`.
 :DiffMerge focus_files  Focus the file panel.
-:DiffMerge abort        (git mergetool) Quit reporting failure to git.
+:DiffMerge abort        (git mergetool) Quit reporting failure to git; elsewhere
+                        it aborts the operation going on (see above).
 
 ==============================================================================
 4. VIEWS                                                      *diffmerge-views*
@@ -275,7 +282,34 @@ opens without taking you there. While git runs before the message (hooks),
 as it is (git commits the index it started with) and the status view does not
 close. What git says (the new commit, or why not, e.g. a failing hook) shows
 when it is done; a message rejected after you wrote it (a commit-msg hook) is
-offered again by the next `cc`.
+offered again by the next commit of the same kind (`cc`, `ca`, continuing),
+when git offers the message it was written over again.
+
+                                                        *diffmerge-operation*
+While a merge, rebase, cherry-pick, revert or `git am` goes on, the file
+panel says which (a rebase with its progress: `REBASING topic (3/7)`, `onto
+1a2b3c4`) and what to type, and `cc` continues it (`git merge|rebase|
+cherry-pick|revert|am --continue`): the message of its commit opens like a
+commit's when git asks for one (a merge, a commit of a rebase whose conflicts
+you resolved; a cherry-pick or revert keeps git's message, `ca` amends it);
+`:q!` aborts the message, the operation goes on. Not while files are in
+conflict or have unsaved edits (what DiffMerge put into a conflicted file to
+show it does not count). `c` offers:
+
+  Continue                 as `cc`
+  Commit what is staged    a new commit (a rebase stopped to edit a commit, or
+                           at a `break` / failing `exec`: splitting a commit)
+  Skip                     the commit being applied is left out (a
+                           cherry-pick, revert, `git am`, a rebase stopped in
+                           conflict; not between two commits of a cherry-pick
+                           or revert: "(between two commits)")
+  Abort                    everything goes back to before it started
+
+Skipping and aborting ask first, naming the files whose unsaved edits git
+writes over. `ca` still amends (a rebase's stops to edit a commit). While the
+todo list of a `git rebase -i` is still open in an editor, nothing is offered
+and commits wait too.
+`:DiffMerge continue|skip|abort` do the same.
 
 FETCH / PULL / PUSH                                         *diffmerge-remote*
 

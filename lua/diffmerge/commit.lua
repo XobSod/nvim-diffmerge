@@ -1,4 +1,5 @@
---- Committing: `git commit` itself (its message template, hooks, merge messages, cleanup),
+--- Committing: `git commit` itself (its message template, hooks, merge messages, cleanup), and
+--- the git commands that commit on their own (a merge, rebase, cherry-pick, revert going on),
 --- with git's editor in this Neovim. scripts/git-editor.lua, git's GIT_EDITOR, asks for the
 --- message file to be edited here (edit) and waits until its window is closed (done).
 local git = require("diffmerge.git")
@@ -14,11 +15,13 @@ local script = vim.fs.joinpath(
   "git-editor.lua"
 )
 
--- the commit running: { repo, tab = where it was started, proc, editing = the message window's
--- state, aborted, stopped, head = HEAD before }
+-- the git command running: { repo, what = "git commit" / "git rebase --continue" ..., kind =
+-- its command, tab = where it was started, proc, editing = the message window's state,
+-- aborted, stopped, head = HEAD before }
 local running
--- by git dir: the message of a commit that failed after it was written (a hook, signing),
--- offered again
+-- by git dir: the message written for a command (`kind`) that failed after it (a hook,
+-- signing), offered again by the next one when git offers what it was written over:
+-- { kind, lines, offered }
 local last_message = {}
 
 --- Quoted for /bin/sh, which runs GIT_EDITOR whatever 'shell' is.
@@ -64,9 +67,18 @@ function M.edit(file)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].buflisted = false
   local lines = api.nvim_buf_get_lines(buf, 0, -1, false)
+  state.offered = message_part(lines)
   local remembered = running and last_message[running.repo.gitdir]
-  if remembered and #message_part(lines) == 0 then
-    api.nvim_buf_set_lines(buf, 0, 0, false, remembered)
+  if remembered and remembered.kind == running.kind and util.lines_equal(remembered.offered, state.offered) then
+    -- in place of git's message (the lines before its comments)
+    local first_comment = #lines
+    for i, l in ipairs(lines) do
+      if l:match("^#") then
+        first_comment = i - 1
+        break
+      end
+    end
+    api.nvim_buf_set_lines(buf, 0, first_comment, false, vim.list_extend(vim.deepcopy(remembered.lines), { "" }))
   end
   local tab = api.nvim_get_current_tabpage()
   if running and running.tab and api.nvim_tabpage_is_valid(running.tab) then
@@ -91,7 +103,7 @@ function M.edit(file)
     api.nvim_set_current_win(win)
     api.nvim_win_set_cursor(win, { 1, 0 })
   else
-    util.info("the commit message is open below in the status view's tab: :wq commits, :q! aborts")
+    util.info("the message is open below in the status view's tab: :wq goes on, :q! aborts")
   end
   -- :q! (ZQ) aborts; :wq, :x, ZZ (and :q of a message left as it is) commit, as in git's editor
   api.nvim_create_autocmd("QuitPre", {
@@ -105,7 +117,7 @@ function M.edit(file)
   vim.keymap.set("n", "ZQ", function()
     state.aborted = true
     vim.cmd("quit!")
-  end, { buffer = buf, desc = "DiffMerge: abort the commit" })
+  end, { buffer = buf, desc = "DiffMerge: abort (the message)" })
   api.nvim_create_autocmd("BufWritePost", {
     buffer = buf,
     callback = function()
@@ -138,9 +150,28 @@ function M.done(file)
   return true
 end
 
---- A commit started here is running (its hooks, or waiting for its message).
+--- A git command started here is running (its hooks, or waiting for its message).
 function M.running()
   return running ~= nil
+end
+
+--- What to tell when something waits for the git command running: "git commit is running:
+--- finish it first (...)".
+function M.busy_message()
+  local what = running and running.what or "git commit"
+  return ("%s is running: finish it first (:wq goes on, :q! aborts)"):format(what)
+end
+
+--- Why `git <args>` cannot start now (nil: it can).
+function M.blocked(repo, committing)
+  local op = git.operation(repo)
+  if op and op.starting then
+    return "a rebase is being set up (its todo list is open in an editor): finish that first"
+  elseif require("diffmerge.remote").running(repo) == "pull" then
+    return committing and "git pull is running: commit when it is done" or "git pull is running: wait for it"
+  elseif source.unsaved_index(repo) then
+    return "the INDEX buffer has unsaved edits: :w it first"
+  end
 end
 
 --- The tab with the window of a message being edited, if any.
@@ -208,27 +239,30 @@ local function summary(repo, res, head_before)
   return stat and (head .. " · " .. stat) or head
 end
 
---- `git commit <args>` with the message edited here; `on_done(res)` when git is finished.
---- While it runs, starting another offers to stop it (a hook that does not end).
----@param args string[] e.g. { "--amend" }
+--- `git <args>` with git's editor here: a commit, or a merge / rebase / cherry-pick / revert
+--- going on (`--continue`, `--skip`, `--abort`). `on_done(res)` when git is finished. While it
+--- runs, starting another offers to stop it (a hook that does not end).
+---@param args string[] e.g. { "commit", "--amend" }, { "rebase", "--continue" }
 ---@param on_done? fun(res: diffmerge.RunResult)
-function M.run(repo, args, on_done)
+function M.run_git(repo, args, on_done)
+  local committing = args[1] == "commit"
+  local what = "git " .. args[1] .. ((not committing and args[2]) and (" " .. args[2]) or "")
   if running then
     if running.editing and not running.editing.done then
-      util.warn("a commit is waiting for its message: :wq commits it, :q! aborts")
-    elseif vim.fn.confirm("git commit is still running (its hooks?). Stop it?", "&Yes\n&No", 2) == 1 then
+      util.warn(
+        running.what == "git commit" and "a commit is waiting for its message: :wq commits it, :q! aborts"
+          or ("%s is waiting for the message: :wq goes on, :q! aborts"):format(running.what)
+      )
+    elseif vim.fn.confirm(running.what .. " is still running (its hooks?). Stop it?", "&Yes\n&No", 2) == 1 then
       running.stopped = true
       -- git and what it started (a hook)
       pcall(vim.uv.kill, -running.proc.pid, "sigterm")
     end
     return
   end
-  if require("diffmerge.remote").running(repo) == "pull" then
-    util.warn("git pull is running: commit when it is done")
-    return
-  end
-  if source.unsaved_index(repo) then
-    util.warn("the INDEX buffer has unsaved edits: :w it first")
+  local why = M.blocked(repo, committing)
+  if why then
+    util.warn(why)
     return
   end
   if vim.v.servername == "" then
@@ -238,43 +272,55 @@ function M.run(repo, args, on_done)
   local env = { GIT_EDITOR = editor, DIFFMERGE_SERVER = vim.v.servername }
   local this = {
     repo = repo,
+    what = what,
+    kind = args[1],
     tab = api.nvim_get_current_tabpage(),
     head = git.line(repo, { "rev-parse", "-q", "--verify", "HEAD" }),
   }
   running = this
   local opts = { env = env, detach = true }
-  this.proc = git.run_async(repo, vim.list_extend({ "commit" }, args), opts, function(res)
+  this.proc = git.run_async(repo, args, opts, function(res)
     running = nil
     -- a hook may have drawn on the terminal (pinentry); (headless: no screen to redraw)
     if #api.nvim_list_uis() > 0 then
       vim.cmd("redraw!")
     end
     if this.stopped then
-      util.info("git commit stopped")
+      util.info(what .. " stopped")
     elseif this.aborted then
-      util.info("commit aborted")
+      util.info(committing and "commit aborted" or (what .. ": the message aborted, nothing committed"))
     elseif res.ok then
       last_message[repo.gitdir] = nil
-      local done = summary(repo, res, this.head)
       local lines = said(res)
-      if done then
-        util.info(done)
-        -- what hooks said
-        lines = said({ stderr = res.stderr })
-      end
-      if #lines > 0 then
-        util.info(tail(lines, 15))
-      elseif not done then
-        util.info("nothing was committed")
+      if committing then
+        local done = summary(repo, res, this.head)
+        if done then
+          util.info(done)
+          -- what hooks said
+          lines = said({ stderr = res.stderr })
+        end
+        if #lines > 0 then
+          util.info(tail(lines, 15))
+        elseif not done then
+          util.info("nothing was committed")
+        end
+      else
+        util.info(#lines > 0 and tail(lines, 15) or (what .. ": done"))
       end
     elseif (res.stdout .. res.stderr):find("empty commit message", 1, true) then
-      util.info("commit aborted: the message is empty")
+      util.info("aborted: the message is empty")
     else
-      if this.editing and this.editing.written then
-        last_message[repo.gitdir] = message_part(vim.split(util.read_file(this.editing.file) or "", "\n"))
+      -- (not when git committed it before it stopped: a rebase's next conflict)
+      local committed = git.line(repo, { "rev-parse", "-q", "--verify", "HEAD" }) ~= this.head
+      if this.editing and this.editing.written and not committed then
+        last_message[repo.gitdir] = {
+          kind = this.kind,
+          lines = message_part(vim.split(util.read_file(this.editing.file) or "", "\n")),
+          offered = this.editing.offered,
+        }
       end
       local lines = said(res)
-      util.warn(#lines > 0 and tail(lines, 15) or "git commit failed")
+      util.warn(#lines > 0 and tail(lines, 15) or (what .. " failed"))
     end
     if on_done then
       on_done(res)
@@ -283,9 +329,16 @@ function M.run(repo, args, on_done)
   -- hooks run before the message: say what is going on when they take a while
   vim.defer_fn(function()
     if running == this and not this.editing then
-      util.info("git commit is running (its hooks?): cc again to stop it")
+      util.info(what .. " is running (its hooks?): cc again to stop it")
     end
   end, 1000)
+end
+
+--- `git commit <args>` with the message edited here (see run_git).
+---@param args string[] e.g. { "--amend" }
+---@param on_done? fun(res: diffmerge.RunResult)
+function M.run(repo, args, on_done)
+  M.run_git(repo, vim.list_extend({ "commit" }, args), on_done)
 end
 
 return M

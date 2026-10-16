@@ -364,7 +364,9 @@ function StatusView:collect(changed)
   local operation
   if op then
     labels = labels or git.conflict_labels(repo)
-    operation = labels.operation or op.kind:upper()
+    local going_on = require("diffmerge.operation").current(repo)
+    local hint = going_on and require("diffmerge.operation").hint(going_on)
+    operation = (labels.operation or op.kind:upper()) .. (hint and ("\n" .. hint) or "")
   end
   local list = { sections.conflicts, sections.staged, sections.unstaged, sections.untracked }
   if #(self.paths or {}) == 0 then
@@ -458,9 +460,15 @@ function StatusView:refresh(opts)
   end
   source.reload_index(self.repo)
   if self.shows ~= "comparison" then
-    local switch = self.displayed ~= self.shows
+    -- (git wrote the files shown anew, an operation's next stop: what is shown goes too)
+    local reshow = self.reshow
+    self.reshow = nil
+    local switch = self.displayed ~= self.shows or reshow
     self.displayed = self.shows
     self:set_sections(self:shown_status(data), { switch = switch })
+    if reshow and self.current then
+      self:show_entry(self.current, { force = true })
+    end
   elseif self.cmp and (opts.reshow or touches_worktree(self.cmp)) then
     -- (one made against HEAD: against the HEAD of now)
     self:show_comparison(self.cmp.again and self.cmp.again() or self.cmp, self.cmp_row, true)
@@ -924,7 +932,7 @@ end
 --- it started with; a pull changes it).
 function StatusView:committing()
   if require("diffmerge.commit").running() then
-    util.warn("a commit is running: finish it first (:wq commits, :q! aborts)")
+    util.warn(require("diffmerge.commit").busy_message())
     return true
   elseif require("diffmerge.remote").running(self.repo) == "pull" then
     util.warn("git pull is running: wait for it")
@@ -933,8 +941,34 @@ function StatusView:committing()
   return false
 end
 
---- `c`: commit or amend, from a menu (`cc` / `ca` typed together go straight there).
+--- `c`: commit or amend, from a menu (`cc` / `ca` typed together go straight there); while a
+--- merge, rebase, cherry-pick or revert goes on: continue, skip, abort it.
 function StatusView:action_commit_menu()
+  local operation = require("diffmerge.operation")
+  local op = operation.current(self.repo)
+  if op and op.starting then
+    util.warn("the rebase is being set up (its todo list is open in an editor)")
+    return
+  elseif op then
+    vim.ui.select(operation.choices(self.repo, op), {
+      prompt = git.operation_name(op),
+      format_item = function(c)
+        return c.text
+      end,
+    }, function(choice)
+      if choice then
+        util.after_select(function()
+          if choice.act == "commit" then
+            return self:start_commit({})
+          end
+          operation[choice.act](self.repo, function()
+            views.refresh_repo(self.repo)
+          end)
+        end)
+      end
+    end)
+    return
+  end
   local choices = { { args = {}, text = "Commit" }, { args = { "--amend" }, text = "Amend the last commit" } }
   vim.ui.select(choices, {
     prompt = "git commit",
@@ -950,8 +984,15 @@ function StatusView:action_commit_menu()
   end)
 end
 
---- `cc`: commit what is staged.
+--- `cc`: commit what is staged; while a merge, rebase, cherry-pick or revert goes on: continue
+--- it.
 function StatusView:action_commit()
+  local operation = require("diffmerge.operation")
+  if operation.current(self.repo) then
+    return operation.continue(self.repo, function()
+      views.refresh_repo(self.repo)
+    end)
+  end
   self:start_commit({})
 end
 

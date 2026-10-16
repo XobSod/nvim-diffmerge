@@ -136,7 +136,9 @@ local function load_git(repo, src)
     if oid then
       return { "Subproject commit " .. oid }, { submodule = true }
     end
-    return { "(" .. (err ~= "" and err or "missing") .. ")" }, { missing = true }
+    -- (what git says, first line: e.g. a path in conflict, not at stage 0)
+    local why = vim.trim(err or ""):match("^[^\n]*")
+    return { "(" .. (why ~= "" and why or "missing") .. ")" }, { missing = true }
   end
   if util.is_binary(content) then
     return { ("Binary file %s (%d bytes)"):format(src.path, #content) }, { binary = true }
@@ -306,6 +308,9 @@ function M.acquire(repo, src)
     info.refs = 0
     registry[key] = info
     by_buf[info.buf] = info
+  elseif src.label then
+    -- the same buffer for another of its uses (a stage of the next conflict): its label then
+    info.src.label = src.label
   end
   info.refs = info.refs + 1
   return info
@@ -355,6 +360,10 @@ function M.reload(info)
     return
   end
   local lines, flags = load_git(info.repo, info.src)
+  if info.src.kind == "stage" and flags.missing then
+    -- (the conflict resolved: what it was stays shown until the view moves on)
+    return
+  end
   local current = util.buf_lines(info.buf, info)
   if util.lines_equal(current, lines) then
     return
@@ -377,10 +386,11 @@ function M.reload(info)
   end
 end
 
---- Reloads every index buffer of a repository.
+--- Reloads every index buffer of a repository (also those of a conflict's stages).
 function M.reload_index(repo)
   for _, info in pairs(registry) do
-    if info.src.kind == "index" and info.repo and info.repo.root == repo.root then
+    local kind = info.src.kind
+    if (kind == "index" or kind == "stage") and info.repo and info.repo.root == repo.root then
       M.reload(info)
     end
   end

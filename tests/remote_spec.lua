@@ -285,7 +285,7 @@ H.describe("fetch / pull / push", function()
     end
     vim.cmd("DiffMerge pull")
     vim.notify = notify
-    H.ok(table.concat(said, "\n"):find("a commit is running", 1, true), vim.inspect(said))
+    H.ok(table.concat(said, "\n"):find("git commit is running", 1, true), vim.inspect(said))
     for _, w in ipairs(api.nvim_list_wins()) do
       if api.nvim_buf_get_name(api.nvim_win_get_buf(w)):match("COMMIT_EDITMSG$") then
         api.nvim_set_current_win(w)

@@ -13,7 +13,8 @@ dependencies, Neovim 0.12+.
   unstaged changes, where `git stash --staged` fails), files, or everything; stashes are listed
   below the changes and open like changes, read-only; apply, pop, drop.
 - **Committing** — `cc` / `ca` (amend) in the status view: git's own commit (template, hooks,
-  merge message), the message in a window below, `:wq` commits, `:q!` aborts.
+  merge message), the message in a window below, `:wq` commits, `:q!` aborts. While a merge,
+  rebase, cherry-pick or revert goes on, `cc` continues it and `c` skips / aborts.
 - **Fetch / pull / push** — `F` / `p` / `P` in the background; pull follows your git config;
   push offers to set an upstream and, when rejected, `--force-with-lease` (never `--force`).
 - **Branches** — `b` switches (`git switch`) from a picker of local and remote branches, or to a

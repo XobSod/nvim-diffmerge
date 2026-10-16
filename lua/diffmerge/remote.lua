@@ -132,7 +132,7 @@ end
 local function after_stop(repo, what, before)
   local op = git.operation(repo)
   if op then
-    util.warn(("git %s stopped in the middle of a %s: git %s --abort undoes it"):format(what, op.kind, op.kind))
+    util.warn(("git %s stopped in the middle of a %s: git %s --abort undoes it"):format(what, git.operation_name(op), op.kind))
   elseif changed_files(repo) ~= before then
     util.warn(("git %s stopped: files may be half updated (the status view shows them)"):format(what))
   else
@@ -195,7 +195,8 @@ function M.unsaved(repo)
   local out = {}
   for _, buf in ipairs(api.nvim_list_bufs()) do
     local name = api.nvim_buf_get_name(buf)
-    if vim.bo[buf].modified and vim.bo[buf].buftype == "" and vim.startswith(name, repo.root .. "/") then
+    local in_git_dir = vim.startswith(name, repo.gitdir .. "/")
+    if vim.bo[buf].modified and vim.bo[buf].buftype == "" and vim.startswith(name, repo.root .. "/") and not in_git_dir then
       out[#out + 1] = git.relpath(repo, name)
     end
   end
@@ -222,11 +223,11 @@ function M.pull(repo, args, on_done)
   end
   local op = git.operation(repo)
   if op then
-    util.warn(("a %s is in progress: finish it first"):format(op.kind))
+    util.warn(("a %s is in progress: finish it first"):format(git.operation_name(op)))
     return
   end
   if require("diffmerge.commit").running() then
-    util.warn("a commit is running: finish it first (:wq commits, :q! aborts)")
+    util.warn(require("diffmerge.commit").busy_message())
     return
   end
   local unsaved = M.unsaved(repo)

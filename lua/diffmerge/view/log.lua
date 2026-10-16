@@ -991,7 +991,7 @@ function Log:action_checkout(ctx)
   end)
 end
 
---- The commit under the cursor of the log, for rewriting it (nil: none, said so).
+--- The commit under the cursor of the log, for an action on it (nil: none, said so).
 function Log:commit_here(ctx)
   local row = self:current_row(ctx)
   if not row or row.kind ~= "commit" then
@@ -1011,6 +1011,94 @@ for name, fn in pairs({ fixup_commit = "fixup", squash_commit = "squash", reword
         views.refresh_repo(self.repo)
       end)
     end
+  end
+end
+
+--- The commits an action of the log applies to, oldest first: those of a visual range (or of
+--- the range selected before), else the two marked commits, else the one under the cursor
+--- (none: said so).
+function Log:commits_here(ctx)
+  if not in_log(self, ctx) then
+    return {}
+  end
+  local lines = {}
+  local range = ctx.range or self:range_lines()
+  local marked = #self.marks == 2 and vim.iter(self.marks):all(function(m)
+    return m.row.kind == "commit"
+  end)
+  if range then
+    for l = range[1], range[2] do
+      lines[#lines + 1] = l
+    end
+  elseif marked then
+    for _, m in ipairs(self.marks) do
+      lines[#lines + 1] = self:line_of_id(m.id)
+    end
+  else
+    lines = { api.nvim_win_get_cursor(0)[1] }
+  end
+  -- (lower in the log: older)
+  table.sort(lines, function(a, b)
+    return a > b
+  end)
+  local out = {}
+  for _, l in ipairs(lines) do
+    local row = self.log:row(l)
+    if row and row.kind == "commit" then
+      out[#out + 1] = row.sha
+    end
+  end
+  if #out == 0 then
+    util.info("no commit of the log there")
+  end
+  return out
+end
+
+local function refreshed(self)
+  return function()
+    views.refresh_repo(self.repo)
+  end
+end
+
+--- After the marked / selected commits were applied: marks and the range go (the next key acts
+--- on the cursor's commit again).
+local function used(self)
+  return function()
+    self.marks, self.range = {}, nil
+    self:redraw_marks()
+    views.refresh_repo(self.repo)
+  end
+end
+
+--- `C`: the commit(s) cherry-picked onto HEAD (commits.lua).
+function Log:action_cherry_pick(ctx)
+  local shas = self:commits_here(ctx)
+  if #shas > 0 then
+    require("diffmerge.commits").cherry_pick(self.repo, shas, used(self))
+  end
+end
+
+--- `X`: the commit(s) reverted.
+function Log:action_revert_commit(ctx)
+  local shas = self:commits_here(ctx)
+  if #shas > 0 then
+    require("diffmerge.commits").revert(self.repo, shas, used(self))
+  end
+end
+
+--- `r`: HEAD reset to the commit (soft / mixed / hard).
+function Log:action_reset_to(ctx)
+  local sha = self:commit_here(ctx)
+  if sha then
+    require("diffmerge.commits").reset(self.repo, sha, refreshed(self))
+  end
+end
+
+--- `T`: the commit tagged.
+function Log:action_tag_commit(ctx)
+  local sha = self:commit_here(ctx)
+  if sha then
+    require("diffmerge.commits").tag(self.repo, sha, refreshed(self))
   end
 end
 

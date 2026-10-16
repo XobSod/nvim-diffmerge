@@ -270,10 +270,14 @@ end
 --- runs, starting another offers to stop it (a hook that does not end).
 ---@param args string[] e.g. { "commit", "--amend" }, { "rebase", "--continue" }
 ---@param on_done? fun(res: diffmerge.RunResult)
----@param opts? { env?: table<string, string> } more of git's environment (GIT_SEQUENCE_EDITOR)
+---@param opts? { env?: table<string, string>, quiet?: boolean }
+---   env: more of git's environment (GIT_SEQUENCE_EDITOR); quiet: nothing said when it went well
+---   (the caller says it)
 function M.run_git(repo, args, on_done, opts)
   local committing = args[1] == "commit"
-  local what = "git " .. args[1] .. ((not committing and args[2]) and (" " .. args[2]) or "")
+  -- (with its option, not its commits: "git rebase --continue", "git cherry-pick")
+  local option = not committing and args[2] and args[2]:match("^%-") and args[2]
+  local what = "git " .. args[1] .. (option and (" " .. option) or "")
   if running then
     if running.editing and not running.editing.done then
       util.warn(
@@ -306,8 +310,7 @@ function M.run_git(repo, args, on_done, opts)
     head = git.line(repo, { "rev-parse", "-q", "--verify", "HEAD" }),
   }
   running = this
-  local opts = { env = env, detach = true }
-  this.proc = git.run_async(repo, args, opts, function(res)
+  this.proc = git.run_async(repo, args, { env = env, detach = true }, function(res)
     running = nil
     -- a hook may have drawn on the terminal (pinentry); (headless: no screen to redraw)
     if #api.nvim_list_uis() > 0 then
@@ -333,7 +336,9 @@ function M.run_git(repo, args, on_done, opts)
           util.info("nothing was committed")
         end
       else
-        util.info(#lines > 0 and tail(lines, 15) or (what .. ": done"))
+        if not (opts or {}).quiet then
+          util.info(#lines > 0 and tail(lines, 15) or (what .. ": done"))
+        end
       end
     elseif (res.stdout .. res.stderr):find("empty commit message", 1, true) then
       util.info("aborted: the message is empty")

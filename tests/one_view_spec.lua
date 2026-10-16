@@ -531,7 +531,7 @@ H.describe("the status view and its log", function()
       return r[1] == "S  U" and r[2] == "Stage / unstage everything"
     end), vim.inspect(files))
     local log = keymaps.help_lines(view.log.buf)
-    H.eq(titles(log), { "Log", "Files", "Stash", "Commit", "Remote", "Branches", "View" })
+    H.eq(titles(log), { "Log", "Files", "Stash", "Commit", "Remote", "Branches", "History", "View" })
     H.eq(log[2], { "<CR>", "Show the row (visual: the combined changes of the rows)" })
     H.ok(vim.iter(log):any(function(r)
       return r[1] == "c  cc  ca"

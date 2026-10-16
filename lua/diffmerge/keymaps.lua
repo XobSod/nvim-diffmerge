@@ -39,6 +39,10 @@ M.descriptions = {
   squash_commit = "Squash the commit under the cursor into its parent (both messages to edit)",
   reword_commit = "Reword the commit under the cursor",
   drop_commit = "Drop the commit under the cursor (asks)",
+  cherry_pick = "Cherry-pick the commit onto HEAD (two marks / visual: all of them, oldest first)",
+  revert_commit = "Revert the commit: a commit undoing it (two marks / visual: all of them)",
+  reset_to = "Reset HEAD to the commit (soft / mixed / hard, hard asks)",
+  tag_commit = "Tag the commit (a message: an annotated tag)",
   fetch = "git fetch",
   pull = "git pull (your git config decides how)",
   push = "git push (no upstream: set it; rejected: --force-with-lease, asked)",
@@ -76,6 +80,8 @@ M.visual = {
   select = true,
   toggle_stage = true,
   stash = true,
+  cherry_pick = true,
+  revert_commit = true,
 }
 
 ---@type table<integer, { mode: string, lhs: string, saved?: table, desc: string, group: string, action?: string }[]>
@@ -276,6 +282,7 @@ local sections = {
   },
   { "Remote", { "fetch", "pull", "push", desc = "git fetch / pull / push (no upstream, rejected: asked)" } },
   { "Branches", { "branch" }, { "checkout" } },
+  { "History", { "cherry_pick" }, { "revert_commit" }, { "reset_to" }, { "tag_commit" } },
   {
     "Log",
     { "log_panel:select" },

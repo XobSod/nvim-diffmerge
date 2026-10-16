@@ -16,7 +16,7 @@ dependencies, Neovim 0.12+.
   merge message), the message in a window below, `:wq` commits, `:q!` aborts. While a merge,
   rebase, cherry-pick or revert goes on, `cc` continues it and `c` skips / aborts. On a commit
   of the log: `cf` fixup with what is staged, `cs` squash into its parent, `cr` reword, `cd`
-  drop.
+  drop; `C` cherry-pick, `X` revert, `r` reset there, `T` tag.
 - **Fetch / pull / push** — `F` / `p` / `P` in the background; pull follows your git config;
   push offers to set an upstream and, when rejected, `--force-with-lease` (never `--force`).
 - **Branches** — `b` switches (`git switch`) from a picker of local and remote branches, or to a
@@ -25,7 +25,7 @@ dependencies, Neovim 0.12+.
   switch, pop).
 - **Changed characters** are highlighted in merges and in the three columns too (following
   `'diffopt'` `inline:`), where Vim's own colours would compare every window with every other.
-- **Any `git diff`** — `:DiffMerge diff main...HEAD -- lua/`; the view shows the git command.
+- **Any `git diff`** — `:DiffMerge diff master...HEAD -- lua/`; the view shows the git command.
 - **Merges, meld-style** — git's merge result in the middle (rerere and fixes by hand kept),
   every conflict shows the base text;
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),
@@ -40,7 +40,7 @@ dependencies, Neovim 0.12+.
   shell alias), both sides editable.
 
 ```
- main                    │ LOCAL · ours · main         │ MERGED · 1/2 conflicts resolved │ REMOTE · theirs · feature
+ master                  │ LOCAL · ours · master       │ MERGED · 1/2 conflicts resolved │ REMOTE · theirs · feature
  MERGING feature         │  5 M.name = opts.name       │     5 M.name = opts.name        │  5 M.name = opts.name
                          │  6 M.debug = … DEBUG ~= nil │ 3   6 M.debug = … == true  ⚑ 1/2│ ✓ 6 M.debug = … == true
   Conflicts 1  unmerged  │  7 end                      │     7 end                       │  7 end
@@ -99,7 +99,7 @@ Neovim.
 
 ### Breadcrumb plugins (winbar)
 
-DiffMerge labels every side in the window bar (`WORKING TREE`, `INDEX`, `LOCAL · ours · main`, …).
+DiffMerge labels every side in the window bar (`WORKING TREE`, `INDEX`, `LOCAL · ours · master`, …).
 Breadcrumb plugins that write the winbar of any window with an LSP client can overwrite the label
 of working-tree files. lspsaga means to leave diff windows alone but only checks when it
 attaches to a buffer; this makes it check every time it draws:

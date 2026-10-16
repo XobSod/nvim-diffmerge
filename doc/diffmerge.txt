@@ -77,7 +77,7 @@ With lazy.nvim: >lua
                         Any `git diff` comparison, e.g. >vim
                           :DiffMerge diff HEAD~3
                           :DiffMerge diff --staged
-                          :DiffMerge diff main...HEAD -- lua/
+                          :DiffMerge diff master...HEAD -- lua/
                           :DiffMerge diff v1.0 v2.0
                           :DiffMerge diff abc123^!
 <
@@ -341,6 +341,27 @@ commit back: what was staged is staged again (one skipped in a conflict: you
 are told how to get the fix back). If your uncommitted changes do
 not apply on the rewritten branch, git keeps them in the stash and they show
 under Conflicts.
+
+                                                          *diffmerge-commits*
+Commits of the log applied to the branch:
+
+  C     cherry-pick: the commit onto HEAD; two marked commits or a range
+        (visual, or selected with <CR>): all of them, oldest first; those
+        already in the history of HEAD are left out
+  X     revert: a commit undoing it (its message to edit: `:q!` or an empty
+        message undoes the revert); several: newest first, git's messages;
+        a commit not in the history of HEAD is asked about
+  r     reset HEAD (the branch) there, from a menu: soft (the changes since
+        staged), mixed (unstaged), hard (the files too: asks first, saying
+        how many files have uncommitted changes and naming untracked files
+        the commit writes over; not with unsaved files)
+  T     tag it: the name asked for, then a message (empty: a lightweight
+        tag; Esc: none); an annotated tag is signed when your config says so
+
+A merge commit is not cherry-picked or reverted here. `C`, `X`, `r`: not
+while a merge, rebase, ... is in progress; a conflict stops a cherry-pick or
+revert like any (|diffmerge-operation|). After `C` / `X` the marks go. After a
+reset you are told where HEAD was and the reset that goes back.
 
 FETCH / PULL / PUSH                                         *diffmerge-remote*
 
@@ -608,6 +629,8 @@ file_panel                           log_panel
   R         refresh                    b     checkout
   q         close                      cf cs fixup_commit / squash_commit
                                        cr cd reword_commit / drop_commit
+                                       C  X  cherry_pick / revert_commit
+                                       r  T  reset_to / tag_commit
                                        R     refresh
                                        q     close
 
@@ -679,7 +702,7 @@ Conflict colours are blended from the Normal background.
 
     local dm = require("diffmerge")
     dm.status({ conflicts = false })
-    dm.diff({ "main...HEAD", "--", "lua/" })
+    dm.diff({ "master...HEAD", "--", "lua/" })
     dm.log({ args = { "--author=me" } })
     dm.history(path, { range = { first, last } })
     dm.difftool(left, right, name)

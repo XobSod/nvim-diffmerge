@@ -61,7 +61,7 @@ function M.status(opts)
   end
 end
 
---- Any `git diff` comparison, e.g. diff({ "main...HEAD", "--", "lua/" }).
+--- Any `git diff` comparison, e.g. diff({ "master...HEAD", "--", "lua/" }).
 ---@param args string[]
 function M.diff(args)
   M.ensure_setup()

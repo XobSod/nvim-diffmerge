@@ -72,6 +72,12 @@ function M.run(repo, args, opts)
     return { ok = false, code = -1, stdout = "", stderr = tostring(obj) }
   end
   local res = obj:wait(opts.timeout or 30000)
+  if not res then
+    pcall(function()
+      obj:kill(15)
+    end)
+    return { ok = false, code = -1, stdout = "", stderr = "git took too long: stopped" }
+  end
   return {
     -- (a git ended by a signal reports 0)
     ok = res.code == 0 and (res.signal or 0) == 0,

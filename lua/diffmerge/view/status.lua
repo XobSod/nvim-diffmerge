@@ -907,6 +907,234 @@ function StatusView:action_discard(ctx)
 end
 
 ---------------------------------------------------------------------------
+-- Ignoring
+---------------------------------------------------------------------------
+
+--- What `i` ignores: the files and directories under the cursor or selected in the file panel
+--- (a section: its files), or the file shown.
+---@return { path: string, dir?: boolean }[] targets, string? why
+function StatusView:ignore_targets(ctx)
+  local items = {}
+  if self.files and ctx.buf == self.files.buf then
+    local first = ctx.range and ctx.range[1] or api.nvim_win_get_cursor(0)[1]
+    local last = ctx.range and ctx.range[2] or first
+    for l = first, last do
+      items[#items + 1] = self.files:item_at(l)
+    end
+  elseif self.current then
+    local e = self.current
+    items = { { kind = "file", entry = e, section = { id = e.section, stash = e.stash } } }
+  end
+  local function refusal(section, path)
+    if section.stash then
+      return "a stash is not ignored"
+    elseif section.id == "conflicts" then
+      return "resolve the conflict first"
+    elseif path and util.basename(path) == ".gitignore" then
+      return ".gitignore itself is not ignored"
+    end
+  end
+  local dirs, files, why = {}, {}, nil
+  for _, item in ipairs(items) do
+    local paths = {}
+    if item.kind == "dir" then
+      paths = { item.node.path }
+    elseif item.kind == "file" then
+      paths = { item.entry.path }
+    elseif item.kind == "section" then
+      paths = vim.tbl_map(function(e)
+        return e.path
+      end, item.section.entries)
+    end
+    for _, p in ipairs(paths) do
+      local no = refusal(item.section, item.kind ~= "dir" and p)
+      if no then
+        why = no
+      elseif item.kind == "dir" then
+        dirs[p] = true
+      else
+        files[p] = true
+      end
+    end
+  end
+  -- what a selected directory holds goes with it
+  local function under_dir(path)
+    for d in pairs(dirs) do
+      if path ~= d and vim.startswith(path, d .. "/") then
+        return true
+      end
+    end
+    return false
+  end
+  local targets = {}
+  for d in pairs(dirs) do
+    if not under_dir(d) then
+      targets[#targets + 1] = { path = d, dir = true }
+    end
+  end
+  for p in pairs(files) do
+    if not under_dir(p) then
+      targets[#targets + 1] = { path = p }
+    end
+  end
+  table.sort(targets, function(a, b)
+    return a.path < b.path
+  end)
+  return targets, why
+end
+
+--- `i`: ignores the files / directories under the cursor (visual: selected) in .gitignore or
+--- .git/info/exclude, by path or by extension, from a menu. Tracked files stop being tracked
+--- (`git rm --cached`); when that deletes committed files with the next commit, it asks first.
+function StatusView:action_ignore(ctx)
+  if self:committing() or self:read_only() then
+    return
+  end
+  local ignore = require("diffmerge.ignore")
+  local targets, why = self:ignore_targets(ctx)
+  if #targets == 0 then
+    util.info(why or "nothing to ignore here")
+    return
+  end
+  local by_path, by_ext, unnamed = {}, {}, {}
+  for _, t in ipairs(targets) do
+    local p = ignore.path_pattern(t.path, t.dir)
+    if p then
+      by_path[#by_path + 1] = p
+    else
+      unnamed[#unnamed + 1] = t.path
+    end
+    local e = not t.dir and ignore.ext_pattern(t.path)
+    if not e then
+      by_ext = nil
+    elseif by_ext and not vim.tbl_contains(by_ext, e) then
+      by_ext[#by_ext + 1] = e
+    end
+  end
+  if #unnamed > 0 then
+    util.warn("a line break in the name: no pattern can name " .. table.concat(unnamed, ", "))
+    return
+  end
+  local choices = {}
+  for _, where in ipairs({ { file = ".gitignore" }, { file = ".git/info/exclude", exclude = true } }) do
+    choices[#choices + 1] = { file = where.file, exclude = where.exclude, patterns = by_path }
+    if by_ext then
+      choices[#choices + 1] = { file = where.file, exclude = where.exclude, patterns = by_ext, by_ext = true }
+    end
+  end
+  vim.ui.select(choices, {
+    prompt = "Ignore",
+    format_item = function(c)
+      return c.file .. ": " .. ignore.names(c.patterns)
+    end,
+  }, function(choice)
+    if choice then
+      util.after_select(function()
+        self:ignore(targets, choice)
+      end)
+    end
+  end)
+end
+
+---@param choice { file: string, exclude?: boolean, patterns: string[], by_ext?: boolean }
+function StatusView:ignore(targets, choice)
+  local ignore = require("diffmerge.ignore")
+  local file = choice.exclude and ignore.exclude_file(self.repo) or git.abspath(self.repo, ".gitignore")
+  if not file then
+    util.err("git rev-parse --git-path failed")
+    return
+  end
+  local buf = util.find_buf(file)
+  if buf and api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+    util.warn("unsaved changes in " .. choice.file .. ": save them first")
+    return
+  end
+  local plan, err = ignore.plan(self.repo, targets)
+  if not plan then
+    util.err(err)
+    return
+  elseif #plan.unmerged > 0 then
+    util.warn("resolve the conflict first: " .. ignore.names(plan.unmerged))
+    return
+  elseif #plan.lost > 0 then
+    util.warn(
+      ("the staged changes of %s are neither committed nor on disk, untracking would lose them: stage or unstage them fully first"):format(
+        ignore.names(plan.lost)
+      )
+    )
+    return
+  end
+  if #plan.committed > 0 then
+    local others = 0
+    if choice.by_ext then
+      local mine = {}
+      for _, p in ipairs(plan.tracked) do
+        mine[p] = true
+      end
+      others = ignore.count_matching_tracked(self.repo, choice.patterns, mine)
+    end
+    local question = ignore.question({
+      committed = vim.tbl_map(function(p)
+        return plan.was[p] and ("%s (was %s)"):format(p, plan.was[p]) or p
+      end, plan.committed),
+      staged_only = plan.staged_only,
+      file = choice.file,
+      exclude = choice.exclude,
+      others = others,
+      pattern = table.concat(choice.patterns, ", "),
+    })
+    if vim.fn.confirm(question, "&Yes\n&No", 2) ~= 1 then
+      return
+    end
+  end
+  -- the patterns first: when they cannot be written, the index is left as it is
+  local added, werr, restore = ignore.append(file, choice.patterns)
+  if not added then
+    util.err(("cannot write %s: %s"):format(choice.file, werr or "?"))
+    return
+  end
+  if #plan.tracked > 0 then
+    local res = ignore.untrack(self.repo, targets)
+    if not res.ok then
+      restore()
+      util.err("git rm --cached failed (nothing changed): " .. vim.trim(res.stderr ~= "" and res.stderr or res.stdout))
+      return
+    end
+  end
+  if buf and api.nvim_buf_is_loaded(buf) then
+    api.nvim_buf_call(buf, function()
+      vim.cmd("silent edit!")
+    end)
+  end
+  self:after_change()
+  local msg
+  if #added > 0 then
+    msg = ("%s: added %s"):format(choice.file, table.concat(added, ", "))
+  else
+    msg = ("%s has %s already"):format(choice.file, table.concat(choice.patterns, ", "))
+  end
+  if #plan.tracked > 0 then
+    msg = msg .. ("; %d file%s no longer tracked"):format(#plan.tracked, #plan.tracked == 1 and "" or "s")
+  end
+  -- a later rule can take it back (`!pattern`)
+  local untracked = {}
+  for _, sec in ipairs((self.status or {}).sections or {}) do
+    for _, e in ipairs(sec.id == "untracked" and sec.entries or {}) do
+      untracked[#untracked + 1] = e.path
+    end
+  end
+  local still = ignore.under(untracked, targets)
+  if #still > 0 then
+    util.warn(("%s\nstill not ignored (another rule takes it back; see git check-ignore -v --no-index): %s"):format(
+      msg,
+      ignore.names(still)
+    ))
+  else
+    util.info(msg)
+  end
+end
+
+---------------------------------------------------------------------------
 -- Committing
 ---------------------------------------------------------------------------
 

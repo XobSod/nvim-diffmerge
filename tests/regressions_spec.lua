@@ -226,6 +226,21 @@ H.describe("paths", function()
   end)
 end)
 
+H.describe("parsing", function()
+  H.it("-z records: without a trailing NUL too, empty ones kept, in linear time", function()
+    local records = require("diffmerge.git_parse").records
+    H.eq(records(""), {})
+    H.eq(records("a"), { "a" })
+    H.eq(records("a\0"), { "a" })
+    H.eq(records("a\0\0b"), { "a", "", "b" })
+    H.eq(records("\0x"), { "", "x" })
+    local long = string.rep("x", 200) .. "\0"
+    local t = vim.uv.hrtime()
+    H.eq(#records(long:rep(20000):sub(1, -2)), 20000)
+    H.ok((vim.uv.hrtime() - t) / 1e9 < 2, "20000 records of 200 bytes took over 2 s")
+  end)
+end)
+
 H.describe("windows", function()
   H.it("a view opened from a panel has your window options, not the panel's", function()
     local dir = H.repo({ ["a.txt"] = { "a" } })

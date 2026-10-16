@@ -12,6 +12,9 @@ dependencies, Neovim 0.12+.
 - **Stashing what you staged** — `s` stashes the staged lines and hunks only (also next to
   unstaged changes, where `git stash --staged` fails), files, or everything; stashes are listed
   below the changes and open like changes, read-only; apply, pop, drop.
+- **Ignoring** — `i` on a file or directory adds it to `.gitignore` or `.git/info/exclude`, by
+  path or by extension (`*.log`); a tracked file stops being tracked, after a question that says
+  what that means for the repository.
 - **Committing** — `cc` / `ca` (amend) in the status view: git's own commit (template, hooks,
   merge message), the message in a window below, `:wq` commits, `:q!` aborts. While a merge,
   rebase, cherry-pick or revert goes on, `cc` continues it and `c` skips / aborts. On a commit

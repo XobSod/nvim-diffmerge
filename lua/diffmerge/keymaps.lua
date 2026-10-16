@@ -31,6 +31,7 @@ M.descriptions = {
   stage_all = "Stage everything",
   unstage_all = "Unstage everything",
   discard = "Discard changes (confirm); on a stash: drop it",
+  ignore = "Ignore: .gitignore / .git/info/exclude, by path or extension (a tracked file stops being tracked: asks)",
   stash = "Stash staged changes / files / everything; on a stash: apply, pop, drop",
   commit_menu = "Commit / amend (menu; on a commit of the log also fixup / squash / reword / drop it); a merge, rebase, … going on: continue / skip / abort",
   commit = "Commit (the message in a window: :wq commits, :q! aborts); a merge, rebase, … going on: continue",
@@ -79,6 +80,7 @@ M.visual = {
   discard_change = true,
   select = true,
   toggle_stage = true,
+  ignore = true,
   stash = true,
   cherry_pick = true,
   revert_commit = true,
@@ -262,6 +264,7 @@ local sections = {
     { "stage_all", "unstage_all", desc = "Stage / unstage everything" },
     { "discard" },
     { "discard_change" },
+    { "ignore" },
   },
   {
     "Conflicts",

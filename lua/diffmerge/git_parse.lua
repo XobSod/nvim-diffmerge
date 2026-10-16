@@ -2,14 +2,15 @@
 local M = {}
 
 local function records(out)
-  local recs = {}
-  for rec in (out or ""):gmatch("([^%z]*)%z") do
+  out = out or ""
+  local recs, rest = {}, 1
+  for rec, after in out:gmatch("([^%z]*)%z()") do
     recs[#recs + 1] = rec
+    rest = after
   end
   -- output without a trailing NUL
-  local tail = (out or ""):match("([^%z]+)$")
-  if tail then
-    recs[#recs + 1] = tail
+  if rest <= #out then
+    recs[#recs + 1] = out:sub(rest)
   end
   return recs
 end

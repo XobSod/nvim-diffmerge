@@ -9,6 +9,7 @@ CONTENTS                                                   *diffmerge-contents*
   4. Views ...................................... |diffmerge-views|
      Status ..................................... |diffmerge-status|
      Stashes .................................... |diffmerge-stash|
+     Ignoring ................................... |diffmerge-ignore|
      Committing ................................. |diffmerge-commit|
      Fetch / pull / push ........................ |diffmerge-remote|
      Branches ................................... |diffmerge-branches|
@@ -264,6 +265,34 @@ stash or its files, `s` offers apply (the staged part staged again), pop
 (apply and drop) and drop; `X` drops it (asks first). An apply that
 conflicts shows the files under Conflicts; git does not apply a stash to
 files with changes of their own.
+
+IGNORING                                                   *diffmerge-ignore*
+
+`i` in the file panel ignores the file, directory or section under the
+cursor (visual: every line), from a menu that shows what it writes:
+
+  .gitignore: /logs/out.log         that path only (anchored at the root)
+  .gitignore: *.log                 every .log file (or directory), any depth
+  .git/info/exclude: /logs/out.log  the same, in your clone only
+  .git/info/exclude: *.log
+
+A directory gives `/dir/`; `*.ext` is offered when every selected file has an
+extension. Wildcards, `\` and trailing spaces in names are escaped, so a
+pattern names only that path. A line the file already has is not added
+again; when another rule takes the file back (`!pattern`), DiffMerge says so.
+
+git ignores untracked files only, so a tracked file (a directory: every
+tracked file in it) stops being tracked (`git rm --cached`). It stays on
+your disk, but your next commit deletes it from the repository, and whoever
+pulls that commit loses their copy (.git/info/exclude does not change that).
+DiffMerge asks first, naming the files. Other tracked files of the same
+`*.ext` stay tracked. A file that was only staged, never committed, is just
+unstaged (nothing asked), except while a merge, rebase, cherry-pick, revert
+or `git am` goes on: then it asks for every tracked file.
+
+Not ignored: conflicts (also in a directory), stashes, `.gitignore` itself,
+and files whose staged changes are neither committed nor on disk (they would
+be lost: stage or unstage them fully first).
 
 COMMITTING                                                 *diffmerge-commit*
 
@@ -619,16 +648,16 @@ repo (file panel and log panel of status views)
 file_panel                           log_panel
   <CR> o    select                     <CR>  select (visual: combined)
   l  h      expand / collapse          m  M  mark / clear_marks
-  i         toggle_tree                t     toggle_range_mode
+  `         toggle_tree                t     toggle_range_mode
   - <Space> toggle_stage               ^     cycle_parent
   S  U      stage_all / unstage_all    g^    toggle_first_parent
   X         discard                    a     toggle_all_branches
-  <leader>1 take_local_file            f     filter
-  <leader>3 take_remote_file           K     commit_details
-  b         branch                     Y     yank_hash
-  R         refresh                    b     checkout
-  q         close                      cf cs fixup_commit / squash_commit
-                                       cr cd reword_commit / drop_commit
+  i         ignore                     f     filter
+  <leader>1 take_local_file            K     commit_details
+  <leader>3 take_remote_file           Y     yank_hash
+  b         branch                     b     checkout
+  R         refresh                    cf cs fixup_commit / squash_commit
+  q         close                      cr cd reword_commit / drop_commit
                                        C  X  cherry_pick / revert_commit
                                        r  T  reset_to / tag_commit
                                        R     refresh

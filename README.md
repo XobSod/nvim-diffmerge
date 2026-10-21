@@ -3,6 +3,8 @@
 Diff, merge and browse git history in Neovim, built on Vim's own diff mode. Pure Lua, no
 dependencies, Neovim 0.12+.
 
+![The status view: a hunk and single lines staged, the working tree edited](demo/gifs/status.gif)
+
 - **Status view** — Conflicts / Staged / Unstaged / Untracked, like `git status`. Files open as
   `HEAD | WORKING TREE | INDEX` (only the columns that differ); `<Space>` toggles the line
   under the cursor between unstaged and staged (lazygit style), `-` the hunk, visual mode the
@@ -20,6 +22,8 @@ dependencies, Neovim 0.12+.
   rebase, cherry-pick or revert goes on, `cc` continues it and `c` skips / aborts. On a commit
   of the log: `cf` fixup with what is staged, `cs` squash into its parent, `cr` reword, `cd`
   drop; `C` cherry-pick, `X` revert, `r` reset there, `T` tag.
+
+  ![A commit from the status view, then a fixup into an older commit from the log](demo/gifs/commit.gif)
 - **Fetch / pull / push** — `F` / `p` / `P` in the background; pull follows your git config;
   push offers to set an upstream and, when rejected, `--force-with-lease` (never `--force`).
 - **Branches** — `b` switches (`git switch`) from a picker of local and remote branches, or to a
@@ -34,22 +38,17 @@ dependencies, Neovim 0.12+.
   resolve with `<leader>1` `<leader>2` `<leader>3` (toggle mine / base / theirs, KDiff3-style),
   undo just works; `<leader>1` / `<leader>3` in the file panel take a side for the whole file.
   Layouts: `mine | merged | other` (side by side or stacked) and `mine | base | other / merged`.
+
+  ![git merge in the shell, the conflicts resolved with git mt, the merge committed](demo/gifs/merge.gif)
 - **Log & history** — `git log --graph` with git's colours, in the status view: its Working
   tree row is the status, a commit shows what it changed; mark two rows (`m` `m`: `git diff A
   B`, `t`: `A...B`) or select a range (`V` … `<CR>`: combined changes); it follows commits,
   fetches and switches, keeping your place; file, directory and line (`-L`) history.
+
+  ![The log: a commit's changes, two branches compared, the changes of a range](demo/gifs/log.gif)
 - **git difftool / mergetool** — files and `--dir-diff` directories; proper exit codes.
 - **Any two files or directories** — `nvim -c "DiffMerge compare" -- old new` (e.g. as a
   shell alias), both sides editable.
-
-```
- master                  │ LOCAL · ours · master       │ MERGED · 1/2 conflicts resolved │ REMOTE · theirs · feature
- MERGING feature         │  5 M.name = opts.name       │     5 M.name = opts.name        │  5 M.name = opts.name
-                         │  6 M.debug = … DEBUG ~= nil │ 3   6 M.debug = … == true  ⚑ 1/2│ ✓ 6 M.debug = … == true
-  Conflicts 1  unmerged  │  7 end                      │     7 end                       │  7 end
-    U  init.lua          │ …                           │ !  14 return a + b    ⚑ 2/2 ,1 …│ 14 return (a or 0) + …
- ────────────────────────┴─────────────────────────────┴─────────────────────────────────┴──────────────────────────
-```
 
 ## Install
 
@@ -126,6 +125,15 @@ setmetatable(crumbs, {
 ```sh
 ./tests/run.sh                  # all specs, headless, against throwaway repositories
 ./tests/run.sh tests/merge_spec.lua
+```
+
+The GIFs above are recorded with [VHS](https://github.com/charmbracelet/vhs) from
+`demo/tapes/` and made smaller with [gifsicle](https://www.lcdf.org/gifsicle/), in Docker
+(everything included; no config of yours):
+
+```sh
+./demo/render.sh                  # every GIF
+./demo/render.sh merge log        # demo/tapes/merge.tape, demo/tapes/log.tape
 ```
 
 ## License

@@ -70,6 +70,55 @@ H.describe("status view", function()
     H.eq(H.entries(view), { "unstaged:M:a.txt", "untracked:?:new.txt" })
   end)
 
+  H.it("stages and unstages more files than a command line holds", function()
+    -- 1100 paths of 2 KB: one argument each would exceed ARG_MAX (E2BIG)
+    local deep = {}
+    for i = 1, 10 do
+      deep[i] = ("d%d"):format(i) .. ("x"):rep(195)
+    end
+    local prefix = table.concat(deep, "/") .. "/"
+    local files, entries = {}, {}
+    for i = 1, 1100 do
+      local path = prefix .. ("f%04d.txt"):format(i)
+      files[path], entries[i] = { "old" }, { path = path }
+    end
+    local dir = H.repo(files)
+    -- (opened while clean: drawing 1100 such paths in the file panel is slow)
+    local view = open_status(dir)
+    for path in pairs(files) do
+      H.write(dir, path, { "new" })
+    end
+    local function count(args)
+      return #vim.split(H.git(dir, args), "\n", { trimempty = true })
+    end
+    view:stage(entries)
+    H.eq(count({ "diff", "--cached", "--name-only" }), 1100, "staged")
+    view:unstage(entries)
+    H.eq(count({ "diff", "--cached", "--name-only" }), 0, "unstaged")
+  end)
+
+  H.it("no commit yet: unstages partly staged files (-, U)", function()
+    local dir = H.repo()
+    for _, name in ipairs({ "a.txt", "b.txt" }) do
+      H.write(dir, name, { "staged" })
+      H.git(dir, { "add", name })
+      H.write(dir, name, { "changed again" })
+    end
+    local view = open_status(dir)
+    view:unstage({ H.find_entry(view, "staged", "a.txt") })
+    H.eq(H.git(dir, { "ls-files", "--cached" }), "b.txt\n", "a.txt unstaged")
+    view:dispatch("unstage_all", { buf = view.files.buf })
+    H.eq(H.git(dir, { "ls-files", "--cached" }), "", "U: everything")
+  end)
+
+  H.it("a list of no paths is no path, not every path", function()
+    local dir = H.repo({ ["a.txt"] = { "a" } })
+    H.write(dir, "new.txt", { "new" })
+    local repo = require("diffmerge.git").find_repo(dir)
+    H.ok(require("diffmerge.git").run_on_paths(repo, { "add", "-A" }, {}).ok, "nothing to do")
+    H.eq(H.git(dir, { "status", "--porcelain" }), "?? new.txt\n", "nothing staged")
+  end)
+
   H.it("stages a single hunk from the working tree window", function()
     local base = H.lines(20)
     local dir = H.repo({ ["a.txt"] = base })

@@ -32,7 +32,7 @@ local function why_not(repo, sha, parent)
   end
   local commit = require("diffmerge.commit")
   if commit.running() then
-    return commit.busy_message()
+    return commit.busy_message(repo)
   end
   local blocked = commit.blocked(repo, false)
   if blocked then

@@ -1,6 +1,7 @@
 --- A merge, rebase, cherry-pick, revert or `git am` going on: continued, the commit being
 --- applied skipped, or aborted, with git's editor here (commit.run_git).
 local git = require("diffmerge.git")
+local parse = require("diffmerge.git_parse")
 local util = require("diffmerge.util")
 
 local api = vim.api
@@ -40,7 +41,7 @@ end
 
 --- Files still in conflict.
 local function conflicted(repo)
-  return vim.split(git.output(repo, { "diff", "--name-only", "--diff-filter=U" }) or "", "\n", { trimempty = true })
+  return parse.records(git.output(repo, { "diff", "--name-only", "-z", "--diff-filter=U" }))
 end
 
 local function read_git_file(repo, name)
@@ -59,12 +60,12 @@ local function touched(repo, op, flag)
     end
   end
   local function names(args)
-    return vim.split(git.output(repo, args) or "", "\n", { trimempty = true })
+    return parse.records(git.output(repo, vim.list_extend({ "diff", "--name-only", "-z" }, args)))
   end
   add(conflicted(repo))
-  add(names({ "diff", "--cached", "--name-only" }))
+  add(names({ "--cached" }))
   if op.kind == "rebase" then
-    add(names({ "diff", "--name-only", "HEAD" }))
+    add(names({ "HEAD" }))
   end
   if flag == "--abort" then
     local start
@@ -76,7 +77,7 @@ local function touched(repo, op, flag)
       start = read_git_file(repo, "sequencer/head")
     end
     if start then
-      add(names({ "diff", "--name-only", "HEAD", start }))
+      add(names({ "HEAD", start }))
     end
   end
   return out

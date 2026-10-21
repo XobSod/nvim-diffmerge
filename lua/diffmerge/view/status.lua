@@ -35,14 +35,6 @@ local conflict_desc = {
   UU = "both modified",
 }
 
-local function literal(paths)
-  local out = {}
-  for _, p in ipairs(paths) do
-    out[#out + 1] = ":(literal)" .. p
-  end
-  return out
-end
-
 --- Opens the status view: the main one of a repository (`:DiffMerge`; `:DiffMerge log` shows
 --- its log), or one of its own for `:DiffMerge log <args>` / `history <path>`: the log and the
 --- status of those paths only.
@@ -583,8 +575,10 @@ end
 -- File level staging
 ---------------------------------------------------------------------------
 
-function StatusView:git(args, what)
-  local res = git.run(self.repo, args)
+--- `git <args>` (on `paths`, when given: see git.run_on_paths); an error is shown.
+---@param paths? string[]
+function StatusView:git(args, what, paths)
+  local res = paths and git.run_on_paths(self.repo, args, paths) or git.run(self.repo, args)
   if not res.ok then
     util.err((what or "git") .. " failed: " .. vim.trim(res.stderr ~= "" and res.stderr or res.stdout))
     return false
@@ -627,9 +621,7 @@ function StatusView:stage(entries)
   if #paths == 0 then
     return
   end
-  local args = { "add", "--" }
-  util.extend(args, literal(paths))
-  self:git(args, "git add")
+  self:git({ "add" }, "git add", paths)
 end
 
 function StatusView:unstage(entries)
@@ -643,14 +635,9 @@ function StatusView:unstage(entries)
   if #paths == 0 then
     return
   end
-  local args
-  if self.head then
-    args = { "restore", "--staged", "--" }
-  else
-    args = { "rm", "--cached", "-r", "-q", "--" }
-  end
-  util.extend(args, literal(paths))
-  self:git(args, "unstage")
+  -- (no commit yet: out of the index, partly staged files too; -f, also because rm's check is slow)
+  local args = self.head and { "restore", "--staged" } or { "rm", "--cached", "-r", "-q", "-f" }
+  self:git(args, "unstage", paths)
 end
 
 --- Marks conflicted files as resolved (git add / git rm), checking for leftovers first.
@@ -827,7 +814,7 @@ function StatusView:action_stage_all()
   else
     local paths = self:entry_paths({ conflicts = true, unstaged = true, untracked = true })
     if #paths > 0 then
-      self:git(vim.list_extend({ "add", "-A", "--" }, literal(paths)), "git add -A")
+      self:git({ "add", "-A" }, "git add -A", paths)
     end
   end
   self:after_change()
@@ -840,14 +827,14 @@ function StatusView:action_unstage_all()
   end
   local paths = { "." }
   if #(self.paths or {}) > 0 then
-    paths = literal(self:entry_paths({ staged = true }, true))
+    paths = self:entry_paths({ staged = true }, true)
   end
   if #paths == 0 then
     -- (nothing staged there)
   elseif self.head then
-    self:git(vim.list_extend({ "reset", "-q", "--" }, paths), "git reset")
+    self:git({ "reset", "-q" }, "git reset", paths)
   else
-    self:git(vim.list_extend({ "rm", "--cached", "-r", "-q", "--" }, paths), "git rm --cached")
+    self:git({ "rm", "--cached", "-r", "-q", "-f" }, "git rm --cached", paths)
   end
   self:after_change()
 end
@@ -888,9 +875,7 @@ function StatusView:action_discard(ctx)
     return
   end
   if #restore > 0 then
-    local args = { "restore", "--worktree", "--" }
-    util.extend(args, literal(restore))
-    self:git(args, "git restore")
+    self:git({ "restore", "--worktree" }, "git restore", restore)
   end
   for _, p in ipairs(delete) do
     vim.fn.delete(git.abspath(self.repo, p))
@@ -1162,8 +1147,8 @@ end
 --- A commit or a pull is running: what is staged must stay as it is (git commits the index
 --- it started with; a pull changes it).
 function StatusView:committing()
-  if require("diffmerge.commit").running() then
-    util.warn(require("diffmerge.commit").busy_message())
+  if require("diffmerge.commit").running(self.repo) then
+    util.warn(require("diffmerge.commit").busy_message(self.repo))
     return true
   elseif require("diffmerge.remote").running(self.repo) == "pull" then
     util.warn("git pull is running: wait for it")
@@ -1452,7 +1437,7 @@ function StatusView:action_stash(ctx)
           if choice.what == "paths" and #renamed > 0 then
             -- git stashes only paths the index knows: the old path of a rename goes back in
             -- (deleted, unstaged)
-            self:git(vim.list_extend({ "reset", "-q", "--" }, literal(renamed)), "git reset")
+            self:git({ "reset", "-q" }, "git reset", renamed)
           end
           self:after_stash(stash.push(self.repo, choice.what, message, selected, untracked), nil, work)
         end
@@ -1475,11 +1460,15 @@ function StatusView:stash_menu(s)
   }, function(choice)
     if not choice then
       return
-    elseif choice.act == "drop" then
-      self:stash_drop(s)
-    else
-      self:stash_apply(s, choice.act == "pop")
     end
+    -- (both may ask)
+    util.after_select(function()
+      if choice.act == "drop" then
+        self:stash_drop(s)
+      else
+        self:stash_apply(s, choice.act == "pop")
+      end
+    end)
   end)
 end
 

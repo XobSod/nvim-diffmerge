@@ -409,6 +409,33 @@ H.describe("stashes in the file panel", function()
     H.eq(H.read(dir, "f.txt"), "A\nb\nc\nd\nE\n")
   end)
 
+  H.it("the stash menu asks only once a picker running in a terminal has closed", function()
+    local dir = staged_and_unstaged()
+    H.git(dir, { "stash", "push", "-m", "work" })
+    local view = open()
+    local asked_in_menu
+    vim.ui.select = function(items, opts, cb)
+      -- like fzf-lua: the choice is passed on from a terminal window, which closes afterwards
+      vim.cmd("botright new")
+      local term = api.nvim_get_current_buf()
+      vim.fn.jobstart({ "sleep", "5" }, { term = true })
+      for _, it in ipairs(items) do
+        if opts.format_item(it) == "Drop" then
+          asked = {}
+          cb(it)
+          asked_in_menu = #asked
+        end
+      end
+      api.nvim_buf_delete(term, { force = true })
+    end
+    confirm_answer = 1
+    press(view, "stash", (section_line(view, "^stash:")))
+    H.eq(asked_in_menu, 0, "not asked while the picker's terminal is open")
+    H.flush(100)
+    H.eq(#asked, 1, "asked once it closed")
+    H.eq(stashes(dir), {})
+  end)
+
   H.it("an apply that conflicts shows the file under Conflicts", function()
     local dir = repo({ ["f.txt"] = BASE })
     H.write(dir, "f.txt", { "STASHED", "b", "c", "d", "e" })

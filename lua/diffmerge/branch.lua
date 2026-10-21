@@ -3,6 +3,7 @@
 --- detached or a new branch there). Uncommitted changes in the way: offered to stash them,
 --- switch, and bring them back there.
 local git = require("diffmerge.git")
+local parse = require("diffmerge.git_parse")
 local remote = require("diffmerge.remote")
 local stash = require("diffmerge.stash")
 local util = require("diffmerge.util")
@@ -87,7 +88,7 @@ local function removed(repo, from, to)
   if a == "" or b == "" or a == b then
     return {}
   end
-  return lines(git.output(repo, { "diff", "--name-only", "--no-renames", "--diff-filter=D", a, b }))
+  return parse.records(git.output(repo, { "diff", "--name-only", "-z", "--no-renames", "--diff-filter=D", a, b }))
 end
 
 --- The untracked files git names as in the way ("would be overwritten").
@@ -205,8 +206,8 @@ local function not_now(repo)
   local op = git.operation(repo)
   if op then
     return ("a %s is in progress: finish it first"):format(git.operation_name(op))
-  elseif require("diffmerge.commit").running() then
-    return require("diffmerge.commit").busy_message()
+  elseif require("diffmerge.commit").running(repo) then
+    return require("diffmerge.commit").busy_message(repo)
   end
   local unsaved = remote.unsaved(repo)
   if #unsaved > 0 then

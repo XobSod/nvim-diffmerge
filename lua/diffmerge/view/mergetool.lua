@@ -20,9 +20,13 @@ local function abs(p)
   return vim.fs.normalize(vim.fn.fnamemodify(p, ":p"))
 end
 
+-- this Neovim is git mergetool's: its exit code tells git whether the merge succeeded
+M.active = false
+
 ---@param opts? { startup?: boolean }
 function M.open(local_path, base_path, remote_path, merged_path, opts)
   opts = opts or {}
+  M.active = true
   local merged_abs = abs(merged_path)
   local repo = git.find_repo(merged_abs)
   local labels = repo and git.conflict_labels(repo)
@@ -54,8 +58,9 @@ function M.open(local_path, base_path, remote_path, merged_path, opts)
     require("diffmerge.view.diff").unlist_args()
     pcall(vim.cmd, "tabonly")
   end
+  -- not in the view's group: the exit code counts also after the view is closed
   api.nvim_create_autocmd("VimLeavePre", {
-    group = self.augroup,
+    group = api.nvim_create_augroup("DiffMergeMergetool", { clear = false }),
     callback = function()
       local code = self:exit_code()
       if code ~= 0 then
@@ -77,7 +82,7 @@ end
 
 --- 0 = resolved and saved, 1 = not resolved.
 function MergetoolView:exit_code()
-  if self.aborted then
+  if self.aborted or M.aborted then
     return 1
   end
   local entry = self.entries[1]
@@ -102,7 +107,12 @@ function MergetoolView:exit_code()
 end
 
 function MergetoolView:abort()
-  self.aborted = true
+  M.abort()
+end
+
+--- Quits reporting failure to git (also after the view was closed).
+function M.abort()
+  M.aborted = true
   vim.cmd("cquit 1")
 end
 

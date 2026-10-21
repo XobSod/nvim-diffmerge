@@ -38,6 +38,9 @@ local function reset()
       v:cleanup()
     end)
   end
+  -- a mergetool decides the exit code of its Neovim, not of this test process
+  pcall(vim.api.nvim_del_augroup_by_name, "DiffMergeMergetool")
+  require("diffmerge.view.mergetool").active = false
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if b ~= vim.api.nvim_get_current_buf() then
       pcall(vim.api.nvim_buf_delete, b, { force = true })

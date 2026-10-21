@@ -198,6 +198,24 @@ H.describe("git mergetool", function()
     H.eq(view:exit_code(), 0)
     H.eq(vim.bo[api.nvim_win_get_buf(view.layout.wins["local"])].modifiable, false)
   end)
+
+  H.it("still reports failure when the view is closed before quitting", function()
+    local dir = conflict_repo()
+    local t = temp_sides(dir)
+    -- a Neovim of its own, as git runs it: the view closed, then quit
+    local function exit_code(quit)
+      local tool = ("DiffMerge mergetool %s %s %s %s"):format(t.LOCAL, t.BASE, t.REMOTE, dir .. "/f.txt")
+      local cmd = { "nvim", "--headless", "--clean", "--cmd", "set rtp^=" .. H.root }
+      vim.list_extend(cmd, { "-c", "runtime plugin/diffmerge.lua", "-c", tool, "-c", "DiffMerge close", "-c", quit, "-c", "qa!" })
+      return vim.system(cmd, { cwd = dir, text = true }):wait().code
+    end
+    H.eq(exit_code("qa!"), 1, "unresolved")
+    H.git(dir, { "checkout", "--theirs", "f.txt" })
+    H.eq(exit_code("qa!"), 0, "resolved on disk")
+    -- :DiffMerge abort: failure reported, the merge itself not aborted
+    H.eq(exit_code("DiffMerge abort"), 1, "aborted")
+    H.ok(vim.uv.fs_stat(dir .. "/.git/MERGE_HEAD"), "the merge goes on")
+  end)
 end)
 
 H.done()

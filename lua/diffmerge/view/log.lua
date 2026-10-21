@@ -13,6 +13,7 @@
 local config = require("diffmerge.config")
 local git = require("diffmerge.git")
 local log_panel = require("diffmerge.panel.log")
+local parse = require("diffmerge.git_parse")
 local revspec = require("diffmerge.revspec")
 local util = require("diffmerge.util")
 local views = require("diffmerge.view")
@@ -499,14 +500,15 @@ function Log:load_paths()
   if not config.options.log.follow_renames then
     return
   end
-  local out = git.output(self.repo, { "log", "--follow", "--format=COMMIT:%H", "--name-only", "-M", "--", self.path })
+  local out = git.output(self.repo, { "log", "--follow", "--format=COMMIT:%H", "--name-only", "-z", "-M", "--", self.path })
+  -- records: "COMMIT:<sha>", then "\n<path>"
   local sha
-  for line in (out or ""):gmatch("[^\n]+") do
-    local c = line:match("^COMMIT:(%x+)$")
+  for _, rec in ipairs(parse.records(out)) do
+    local c = rec:match("^COMMIT:(%x+)$")
     if c then
       sha = c
     elseif sha then
-      self.path_at[sha] = line
+      self.path_at[sha] = rec:gsub("^\n", "")
       sha = nil
     end
   end

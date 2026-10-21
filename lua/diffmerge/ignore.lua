@@ -217,16 +217,7 @@ function M.untrack(repo, targets)
   local paths = vim.tbl_map(function(t)
     return t.path
   end, targets)
-  return git.run(repo, {
-    "rm",
-    "--cached",
-    "-r",
-    "-f",
-    "-q",
-    "--ignore-unmatch",
-    "--pathspec-from-file=-",
-    "--pathspec-file-nul",
-  }, { stdin = table.concat(paths, "\0"), env = { GIT_LITERAL_PATHSPECS = "1" } })
+  return git.run_on_paths(repo, { "rm", "--cached", "-r", "-f", "-q", "--ignore-unmatch" }, paths)
 end
 
 --- How many tracked files `patterns` match (as git would match them in `.gitignore`).

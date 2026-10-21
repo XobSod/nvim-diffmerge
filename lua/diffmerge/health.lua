@@ -15,8 +15,10 @@ function M.check()
   local v, raw = git.version()
   if not v then
     h.error("git not found in $PATH")
-  elseif v[1] < 2 or (v[1] == 2 and v[2] < 23) then
-    h.warn(raw .. ": git 2.23+ is recommended (git restore)")
+  elseif v[1] < 2 or (v[1] == 2 and v[2] < 26) then
+    h.warn(raw .. ": git 2.26+ is needed to stage or ignore files from the file panel (--pathspec-from-file); 2.35+ is recommended")
+  elseif v[1] == 2 and v[2] < 35 then
+    h.warn(raw .. ": git 2.35+ is recommended (stashing staged changes: stash --staged; offered pushes: --force-if-includes, 2.30)")
   else
     h.ok(raw)
   end

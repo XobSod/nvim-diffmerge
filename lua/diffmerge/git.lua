@@ -88,6 +88,24 @@ function M.run(repo, args, opts)
   }
 end
 
+--- Runs `git <args>` on `paths`, given on stdin as literal pathspecs: one argument per path
+--- would exceed the command line (a committed node_modules).
+---@param paths string[]
+---@param opts? { env?: table<string, string>, timeout?: integer }
+---@return diffmerge.RunResult
+function M.run_on_paths(repo, args, paths, opts)
+  opts = opts or {}
+  if #paths == 0 then
+    -- (an empty list would mean every path to some commands: `add -A`, `reset`)
+    return { ok = true, code = 0, stdout = "", stderr = "" }
+  end
+  return M.run(repo, vim.list_extend(vim.list_extend({}, args), { "--pathspec-from-file=-", "--pathspec-file-nul" }), {
+    stdin = table.concat(paths, "\0"),
+    env = vim.tbl_extend("force", opts.env or {}, { GIT_LITERAL_PATHSPECS = "1" }),
+    timeout = opts.timeout,
+  })
+end
+
 --- Runs git asynchronously; `cb` is called on the main loop.
 ---@param cb fun(res: diffmerge.RunResult)
 ---@param opts? { stdin?: string, env?: table<string, string>, detach?: boolean } detach: in a process group of its own (kill(-pid) ends what it started too)

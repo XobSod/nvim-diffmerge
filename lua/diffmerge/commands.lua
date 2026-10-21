@@ -141,10 +141,10 @@ M.subcommands = {
     end
   end,
   abort = function()
-    local view = dm().current()
-    if view and view.abort then
-      -- (git mergetool: quit reporting failure to git)
-      view:abort()
+    local mergetool = require("diffmerge.view.mergetool")
+    if mergetool.active then
+      -- git mergetool's Neovim: quit reporting failure to git (not the merge aborted)
+      mergetool.abort()
     else
       dm().operation("abort")
     end

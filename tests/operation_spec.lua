@@ -173,6 +173,26 @@ H.describe("an operation going on", function()
     H.eq({ going_on(dir, "CHERRY_PICK_HEAD"), vim.trim(H.git(dir, { "rev-parse", "HEAD" })) }, { false, head })
   end)
 
+  H.it("aborting names unsaved edits of a file with a tab, a quote and a backslash in its name", function()
+    local name = 'we"ird\tna\\me.txt'
+    local dir = H.repo({ [name] = { "a", "b", "c" } })
+    H.git(dir, { "branch", "-m", "master" })
+    H.git(dir, { "checkout", "-q", "-b", "topic" })
+    H.commit(dir, "t", { [name] = { "T", "b", "c" } })
+    H.git(dir, { "checkout", "-q", "master" })
+    H.commit(dir, "m", { [name] = { "M", "b", "c" } })
+    vim.cmd.cd(dir)
+    vim.system({ "git", "cherry-pick", "topic" }, { cwd = dir }):wait()
+    open()
+    local buf = vim.fn.bufadd(dir .. "/" .. name)
+    vim.fn.bufload(buf)
+    api.nvim_buf_set_lines(buf, 0, 1, false, { "not saved" })
+    asked, confirm_answer = {}, 2
+    vim.cmd("DiffMerge abort")
+    confirm_answer, vim.bo[buf].modified = 1, false
+    H.ok(#asked == 1 and asked[1]:find("Unsaved edits in " .. name, 1, true), vim.inspect(asked))
+  end)
+
   H.it("a revert continued; :DiffMerge skip / abort with nothing going on says so", function()
     local dir = repo()
     H.commit(dir, "m2", { ["f.txt"] = { "M2", "b", "c" } })

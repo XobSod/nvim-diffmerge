@@ -164,16 +164,21 @@ function M.done(file)
   return true
 end
 
---- A git command started here is running (its hooks, or waiting for its message).
-function M.running()
-  return running ~= nil
+--- A git command started here is running (its hooks, or waiting for its message); with
+--- `repo`: one in that repository. One runs at a time in this Neovim: git's editor answers here.
+function M.running(repo)
+  return running ~= nil and (not repo or running.repo.gitdir == repo.gitdir)
 end
 
 --- What to tell when something waits for the git command running: "git commit is running:
---- finish it first (...)".
-function M.busy_message()
+--- finish it first (...)"; where it runs, when that is not `repo`.
+function M.busy_message(repo)
   local what = running and running.what or "git commit"
-  return ("%s is running: finish it first (:wq goes on, :q! aborts)"):format(what)
+  local where = ""
+  if running and repo and running.repo.gitdir ~= repo.gitdir then
+    where = " in " .. vim.fn.fnamemodify(running.repo.root, ":~")
+  end
+  return ("%s is running%s: finish it first (:wq goes on, :q! aborts)"):format(what, where)
 end
 
 --- Why `git <args>` cannot start now (nil: it can).
@@ -278,7 +283,11 @@ function M.run_git(repo, args, on_done, opts)
   -- (with its option, not its commits: "git rebase --continue", "git cherry-pick")
   local option = not committing and args[2] and args[2]:match("^%-") and args[2]
   local what = "git " .. args[1] .. (option and (" " .. option) or "")
-  if running then
+  if running and running.repo.gitdir ~= repo.gitdir then
+    -- (not stopped from another repository)
+    util.warn(M.busy_message(repo))
+    return
+  elseif running then
     if running.editing and not running.editing.done then
       util.warn(
         running.what == "git commit" and "a commit is waiting for its message: :wq commits it, :q! aborts"

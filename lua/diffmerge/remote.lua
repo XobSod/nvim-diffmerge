@@ -226,8 +226,8 @@ function M.pull(repo, args, on_done)
     util.warn(("a %s is in progress: finish it first"):format(git.operation_name(op)))
     return
   end
-  if require("diffmerge.commit").running() then
-    util.warn(require("diffmerge.commit").busy_message())
+  if require("diffmerge.commit").running(repo) then
+    util.warn(require("diffmerge.commit").busy_message(repo))
     return
   end
   local unsaved = M.unsaved(repo)

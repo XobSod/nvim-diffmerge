@@ -28,15 +28,19 @@ CONTENTS                                                   *diffmerge-contents*
 DiffMerge shows git comparisons in Vim's own diff mode (|diff|): filler lines,
 scroll binding, folding of unchanged text and |]c| / |[c| work as usual.
 Changes are moved by pointing at them: staging, unstaging and discarding a
-line or hunk, picking a side of a conflict. Every view states the git command it is equivalent to, so there are no
-surprises from git's point of view.
+line or hunk, picking a side of a conflict. Every git comparison states the
+git command it is equivalent to, so there are no surprises from git's point
+of view.
 
 - Working tree files are the real buffers: edit and |:w| them.
-- The index is an editable buffer: |:w| writes it to the index.
+- The index is an editable buffer where a view shows it for editing
+  (`:DiffMerge diff`, the two-way status): |:w| writes it to the index. In
+  the three columns of the status view it is read-only.
 - Merges start from git's merge result: its conflict blocks show the BASE text
   (no conflict markers) until you resolve them.
 
-Requires Neovim 0.12+ and git 2.23+. Mini.icons (files and folders) or 
+Requires Neovim 0.12+ and git 2.26+ (2.35+ for stashing staged changes; see
+`:checkhealth diffmerge`). Mini.icons (files and folders) or
 nvim-web-devicons (files) are used for icons when available.
 
 ==============================================================================
@@ -146,8 +150,11 @@ With lazy.nvim: >lua
                         Cycle or set the layout (|diffmerge-layouts|).
 :DiffMerge files        Show / hide the file panel, like `gF`.
 :DiffMerge focus_files  Focus the file panel.
-:DiffMerge abort        (git mergetool) Quit reporting failure to git; elsewhere
-                        it aborts the operation going on (see above).
+:DiffMerge abort        Once `:DiffMerge mergetool` ran in this Neovim (git
+                        mergetool's), also after its view was closed: quit
+                        reporting failure to git, the merge itself goes on.
+                        Elsewhere it aborts the operation going on (see
+                        above).
 
 ==============================================================================
 4. VIEWS                                                      *diffmerge-views*
@@ -185,10 +192,12 @@ TREE, everything staged shows HEAD | INDEX. The columns follow every (un)stage,
 from the diff windows or the file panel alike (a line, a hunk, the file, `S`,
 `U`, discarding): the column a change moves into always appears, so a line you
 (un)stage stays in view, and a column that became identical to its neighbour
-goes away. Only these actions remove a column: saving a file, unsaved edits or changes made
-elsewhere (lazygit, a terminal) never close the window you work in. The INDEX
-column is read-only here. A file listed under both Staged and Unstaged opens
-the same view.
+goes away. Only DiffMerge's own actions remove a column (these, and stashing,
+ignoring, committing, continuing / skipping / aborting, resolving conflicts,
+fetch / pull / push, switching, the log's actions): saving a file, unsaved
+edits or changes made elsewhere (lazygit, a terminal) never close the window
+you work in. The INDEX column is read-only here. A file listed under both
+Staged and Unstaged opens the same view.
 
 Binary files, symlinks (shown as "Symbolic link → target") and submodules
 ("Subproject commit …") are staged as a whole from the file panel.
@@ -235,7 +244,8 @@ there and |:w| writes it to the index); `-` / `<Space>` then stage in Unstaged
 and unstage in Staged.
 
 The view refreshes when files are written, when Neovim gets focus and when the
-git directory changes (e.g. lazygit or a terminal).
+git directory changes (e.g. lazygit or a terminal; remote branches and tags
+are not watched: a fetch made elsewhere shows at the next focus).
 
 STASHES                                                     *diffmerge-stash*
 
@@ -527,14 +537,14 @@ blocks stays as it is (git's own merge, rerere resolutions, fixes made by
 hand), and every block is an unresolved conflict showing its BASE text. The
 conflicts are git's blocks, also where git joined nearby conflicts into one
 block or split one into two; any marker style (merge, diff3, zdiff3) and size
-(gitattributes `conflict-marker-size`). A block changed by hand (inside its
-markers or right next to them) stays as it is, markers included, unresolved
-until you pick a side or remove the markers. Blocks that LOCAL, BASE or REMOTE
-have as text (a file showing conflict markers) are text. Without markers (a
-file resolved by hand or by rerere, or saved half-resolved), git's merge of
-the three versions (`git merge-file`, in the repository's merge.conflictStyle)
-gives the conflicts; changes of one side, or identical changes of both, are
-applied as git applied them.
+of 7 or more (gitattributes `conflict-marker-size`). A block changed by hand
+(inside its markers or right next to them) stays as it is, markers included,
+unresolved until you pick a side or remove the markers. Blocks that LOCAL,
+BASE or REMOTE have as text (a file showing conflict markers) are text.
+Without markers (a file resolved by hand or by rerere, or saved
+half-resolved), git's merge of the three versions (`git merge-file`, in the
+repository's merge.conflictStyle) gives the conflicts; changes of one side, or
+identical changes of both, are applied as git applied them.
 
 Native diff colours are muted in merge windows (Vim compares every window
 with every other), and 'diffopt' "linematch" is suspended while a merge is on
@@ -562,16 +572,23 @@ Resolving, in any window of the merge layout, for the chunk under the cursor:
 
 The state of a chunk is derived from its content, so undo and manual edits
 just work. Undo stops where the merge started: git's markers do not come back
-(redo still works). Lines typed at the very edge of a chunk (e.g. `o` on the
-line above it) stay outside of it, so an unresolved conflict never becomes
-"resolved" by accident. Modify/delete conflicts stay unresolved until you pick
-a side; an emptied file is offered for deletion (`git rm`) when you mark it
-resolved. Saving writes what you see. Re-opening a file that was saved
-half-resolved finds the unresolved conflicts again (they still show their BASE
-text); in a new Neovim session they are found in git's merge in the
-repository's merge.conflictStyle, so a file whose markers came in another
-style (`git checkout --conflict=diff3`) may then show its conflicts joined
-differently.
+(redo still works); after the file is read again from disk (|:e!|), or with
+an undo file in a later session, undo can reach them. Lines typed at the very
+edge of a chunk (e.g. `o` on the line above it) stay outside of it, so an
+unresolved conflict never becomes "resolved" by accident. Modify/delete
+conflicts stay unresolved until you touch them (a pick or an edit); a pick is
+not remembered when the file is shown anew, so for these `<leader>1` /
+`<leader>3` in the file panel (the whole file) are the way. An emptied file is
+offered for deletion (`git rm`) when you mark it resolved. Saving writes what
+you see. Re-opening a file that was saved half-resolved finds the unresolved
+conflicts again (they still show their BASE text); in a new Neovim session
+they are found in git's merge in the repository's merge.conflictStyle, so a
+file whose markers came in another style (`git checkout --conflict=diff3`)
+may then show its conflicts joined differently, and a joined conflict that
+matches no combination counts as edited (resolved). A conflict resolved to
+exactly its BASE text (`<leader>2`, or `<leader>0` where BASE is empty) looks
+unresolved; without what DiffMerge remembers of a conversion (a new session,
+or a file that had no markers when shown) it counts as unresolved.
 
 During a rebase "ours" is the branch being rebased onto and "theirs" is your
 commit; the window bars say so.
@@ -613,9 +630,10 @@ directory, so saving writes the working tree file at once; with
 
 `git mergetool` runs the tool once per file. Neovim exits with code 1 (git
 restores the file and reports the merge as failed) while conflicts are
-unresolved or the merged file is unsaved; `:DiffMerge abort` quits with 1
-explicitly. To go through all conflicts in one Neovim, use
-`:DiffMerge conflicts` (the `git mt` alias above).
+unresolved, the merged file is unsaved or still has git's markers, also after
+`:DiffMerge close`; `:DiffMerge abort` quits with 1 explicitly. To go through
+all conflicts in one Neovim, use `:DiffMerge conflicts` (the `git mt` alias
+above).
 
 ==============================================================================
 6. KEYMAPS / ACTIONS                                        *diffmerge-keymaps*

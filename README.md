@@ -97,6 +97,8 @@ Neovim.
 
 `:help diffmerge` — commands, views, keymaps (`g?` in any view), configuration, highlights.
 
+[DESIGN.md](DESIGN.md) — how DiffMerge is meant to behave, and why.
+
 ## Compatibility
 
 ### Breadcrumb plugins (winbar)
